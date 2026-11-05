@@ -1,8 +1,8 @@
 import { rowOf, colOf, boxOf } from "./engine.js";
 
 const MAX_MISTAKES = 3;
-const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert" };
-const STORE = { game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next2:${d}`, level: "cagey:level" };
+const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
+const STORE = { game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level" };
 
 const $ = (id) => document.getElementById(id);
 const board = $("board");

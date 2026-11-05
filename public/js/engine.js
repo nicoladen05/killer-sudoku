@@ -192,44 +192,54 @@ const neighbors = (i) => {
   return out;
 };
 
-/** Split the solved grid into connected cages without repeated digits. */
-function makeCages(solution, sizes, rng) {
+/**
+ * Split the solved grid into connected cages without repeated digits.
+ * `pickSize` chooses each cage's target size. With `boxBias` > 0 a cage grows
+ * inside its own 3x3 box when it can, and up to `maxSingles` single-cell cages
+ * are kept; any beyond that are folded into a neighbouring cage.
+ */
+function makeCages(solution, pickSize, rng, { boxBias = 0, maxSingles = 0, maxCage = 9 } = {}) {
   const cageOf = new Array(81).fill(-1);
   const cages = [];
   for (const start of shuffle([...Array(81).keys()], rng)) {
     if (cageOf[start] !== -1) continue;
-    const target = sizes[Math.floor(rng() * sizes.length)];
+    const target = pickSize();
     const id = cages.length;
     const cells = [start];
     let digits = 1 << solution[start];
     cageOf[start] = id;
     while (cells.length < target) {
-      const options = [];
+      let options = [];
       for (const c of cells) for (const n of neighbors(c)) {
         if (cageOf[n] === -1 && !(digits & (1 << solution[n]))) options.push(n);
       }
       if (!options.length) break;
+      const inBox = options.filter((n) => boxOf(n) === boxOf(start));
+      if (inBox.length && rng() < boxBias) options = inBox;
       const n = options[Math.floor(rng() * options.length)];
       cells.push(n); cageOf[n] = id; digits |= 1 << solution[n];
     }
     cages.push(cells);
   }
 
-  // Fold single-cell cages into a neighbouring cage when no digit repeats.
+  // Fold surplus single-cell cages into a neighbouring cage when no digit repeats.
+  let singles = cages.filter((c) => c.length === 1).length;
   let changed = true;
-  while (changed) {
+  while (changed && singles > maxSingles) {
     changed = false;
-    for (let id = 0; id < cages.length; id++) {
+    for (const id of shuffle([...cages.keys()], rng)) {
+      if (singles <= maxSingles) break;
       const cells = cages[id];
       if (cells.length !== 1) continue;
       const i = cells[0];
       const opts = shuffle(neighbors(i).map((n) => cageOf[n]), rng).filter((o) => {
         const other = cages[o];
-        return other.length && other.length < 9 && !other.some((j) => solution[j] === solution[i]);
+        return other.length && other.length < maxCage && !other.some((j) => solution[j] === solution[i]);
       });
       if (!opts.length) continue;
       const to = opts[0];
       cages[to].push(i); cageOf[i] = to; cages[id] = [];
+      singles -= cages[to].length === 2 ? 2 : 1;
       changed = true;
     }
   }
@@ -301,6 +311,70 @@ function makeLogical(cages, givens, solution, rng, cfg) {
   return null;
 }
 
+// ---------- Levels ----------
+
+/**
+ * Easy to Expert follow the style of the big killer sudoku apps: every level
+ * uses the same layout of small cages (mostly 2 and 3 cells, at most 5), and
+ * the base puzzle can be solved with cage combinations, singles and the rule
+ * of 45 on one row, column or box. The level only sets how many digits are
+ * shown at the start. A base puzzle may need only a few rule-of-45 and
+ * locked-candidate steps, so the count of each technique is bounded too, not
+ * just the hardest one.
+ *
+ * Master keeps the harder generation: bigger cages, no digits shown, and it
+ * must need the rule of 45 across several houses at least twice.
+ */
+const LAYOUT = {
+  sizeWeights: [[1, 2], [2, 52], [3, 31], [4, 10], [5, 3]],
+  maxCage: 5,
+  maxSingles: 3,
+  boxBias: 0.4,
+  cages: [31, 35],
+};
+const BASE = { maxTier: 2, maxGivens: 0, maxSteps: { "rule of 45": 3, "locked candidates": 2 } };
+
+export const DIFFICULTIES = {
+  easy:   { givens: 31, maxTier: 2 },
+  medium: { givens: 26, maxTier: 2 },
+  hard:   { givens: 10, maxTier: 2 },
+  expert: { givens: 0,  maxTier: 2, minSteps: { "rule of 45": 1 } },
+  master: { master: true, sizes: [3, 4, 4, 5, 6], maxCage: 6, maxGivens: 0, maxTier: 4, targetTier: 3, minHard: 2, hardenTries: 80 },
+};
+
+const withinSteps = (used, cfg) => {
+  for (const [name, max] of Object.entries(BASE.maxSteps)) if ((used[name] || 0) > max) return false;
+  for (const [name, min] of Object.entries(cfg.minSteps || {})) if ((used[name] || 0) < min) return false;
+  return true;
+};
+
+function pickWeighted(weights, rng) {
+  const total = weights.reduce((s, [, w]) => s + w, 0);
+  let r = rng() * total;
+  for (const [v, w] of weights) if ((r -= w) < 0) return v;
+  return weights[weights.length - 1][0];
+}
+
+/** An Easy-to-Expert puzzle: a base puzzle, then random digits revealed. */
+function generateStandard(cfg, rng) {
+  for (;;) {
+    const solution = randomSolution(rng);
+    const cages = makeCages(solution, () => pickWeighted(LAYOUT.sizeWeights, rng), rng, LAYOUT);
+    const givens = new Array(81).fill(0);
+    const base = makeLogical(cages, givens, solution, rng, BASE);
+    if (!base || givens.some(Boolean)) continue;
+    if (cages.length < LAYOUT.cages[0] || cages.length > LAYOUT.cages[1]) continue;
+    if (cages.filter((c) => c.cells.length === 1).length > LAYOUT.maxSingles) continue;
+    if (!withinSteps(base.used, cfg)) continue;
+    const check = solve(cages, givens, 2, 30000);
+    if (check.count > 1 || (!check.aborted && check.count !== 1)) continue;
+    const free = shuffle([...Array(81).keys()], rng);
+    for (let k = 0; k < cfg.givens; k++) givens[free[k]] = solution[free[k]];
+    const res = logicSolve(cages, givens, cfg.maxTier);
+    return { cages, givens, solution, tier: res.tier, techniques: res.used };
+  }
+}
+
 const meets = (res, cfg) => res.tier >= cfg.targetTier && res.hard >= cfg.minHard;
 const rank = (res) => res.tier * 1000 + res.hard;
 
@@ -346,33 +420,22 @@ function harden(cages, givens, solution, rng, cfg, res) {
 }
 
 /**
- * Levels are graded by the hardest technique a puzzle needs (see logic.js):
- * the puzzle must be solvable using techniques up to `maxTier`, and should
- * need one of tier `targetTier`. Expert also needs several such hard steps
- * (`minHard`), since killer cages rarely leave work for tier-4 techniques.
- */
-export const DIFFICULTIES = {
-  easy:   { sizes: [2, 2, 2, 3, 3],    maxCage: 3, maxGivens: 40, extraGivens: 6, maxTier: 1, targetTier: 1, minHard: 0, hardenTries: 0 },
-  medium: { sizes: [2, 2, 3, 3, 4],    maxCage: 4, maxGivens: 6,  extraGivens: 0, maxTier: 2, targetTier: 2, minHard: 0, hardenTries: 30 },
-  hard:   { sizes: [2, 3, 3, 4, 4, 5], maxCage: 5, maxGivens: 0,  extraGivens: 0, maxTier: 3, targetTier: 3, minHard: 1, hardenTries: 60 },
-  expert: { sizes: [3, 4, 4, 5, 6],    maxCage: 6, maxGivens: 0,  extraGivens: 0, maxTier: 4, targetTier: 3, minHard: 2, hardenTries: 80 },
-};
-
-/**
  * Generate a puzzle with a unique solution that can be solved by logic alone.
  * @returns {{cages, givens:number[], solution:number[], difficulty:string, tier:number, techniques:Object, seed:number}}
  */
 export function generate(difficulty = "medium", seed = (Math.random() * 2 ** 32) >>> 0) {
   const cfg = DIFFICULTIES[difficulty] || DIFFICULTIES.medium;
   const rng = mulberry32(seed);
+  if (!cfg.master) return { ...generateStandard(cfg, rng), difficulty, seed };
+  const pickSize = () => cfg.sizes[Math.floor(rng() * cfg.sizes.length)];
   let best = null;
   for (let attempt = 0; attempt < 8 || !best; attempt++) {
     const solution = randomSolution(rng);
-    const cages = makeCages(solution, cfg.sizes, rng);
+    const cages = makeCages(solution, pickSize, rng);
     const givens = new Array(81).fill(0);
     let res = makeLogical(cages, givens, solution, rng, cfg);
     if (!res) continue;
-    if (cfg.hardenTries) res = harden(cages, givens, solution, rng, cfg, res);
+    res = harden(cages, givens, solution, rng, cfg, res);
     // Logic proves uniqueness already; the brute-force solver double-checks it.
     const check = solve(cages, givens, 2, 30000);
     if (check.count > 1 || (!check.aborted && check.count !== 1)) continue;
@@ -380,9 +443,6 @@ export function generate(difficulty = "medium", seed = (Math.random() * 2 ** 32)
     if (!best || rank(res) > rank(best.res)) best = cand;
     if (meets(best.res, cfg)) break;
   }
-  // Easy reveals a few extra digits on top of what logic needs.
-  const free = shuffle([...Array(81).keys()].filter((i) => !best.givens[i]), rng);
-  for (let k = 0; k < cfg.extraGivens && k < free.length; k++) best.givens[free[k]] = best.solution[free[k]];
   const { res, ...puzzle } = best;
   return { ...puzzle, difficulty, seed };
 }
