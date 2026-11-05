@@ -2,7 +2,7 @@
 //
 //   GET  /api/scores?level=hard[&player=<id>]  -> best time per player, top 50
 //
-// Ranked time = solve time + HINT_PENALTY seconds per hint; `time` in responses
+// Ranked time = solve time + hint penalty (see hintPenalty); `time` in responses
 // is that ranked time and `raw` the clock time.
 //   POST /api/scores  { level, player, name, time, mistakes, hints, puzzle }
 //
@@ -16,8 +16,14 @@ const MIN_TIME = { easy: 20, medium: 30, hard: 45, expert: 60, master: 90 };
 const MAX_TIME = 24 * 3600;
 const TOP = 50;
 const RATE = { perHour: 20, perDay: 100 };
-/** Seconds added to the ranked time for each hint used. */
-export const HINT_PENALTY = 30;
+/**
+ * Seconds added to the ranked time for n hints. Each hint costs one minute more
+ * than the one before (1, 2, 3 ... minutes), so the total grows with n squared and
+ * pressing Hint repeatedly always costs far more than solving those cells.
+ * Must match hintPenalty in public/js/app.js.
+ */
+export const hintPenalty = (n) => 30 * n * (n + 1);
+const PENALTY_SQL = "30 * hints * (hints + 1)";
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -44,8 +50,8 @@ async function ipHash(request) {
 
 const BEST = `
   SELECT player, name, score, time, mistakes, hints, created_at FROM (
-    SELECT player, name, time + hints * ${HINT_PENALTY} AS score, time, mistakes, hints, created_at,
-           ROW_NUMBER() OVER (PARTITION BY player ORDER BY time + hints * ${HINT_PENALTY}, mistakes, created_at) AS n
+    SELECT player, name, time + ${PENALTY_SQL} AS score, time, mistakes, hints, created_at,
+           ROW_NUMBER() OVER (PARTITION BY player ORDER BY time + ${PENALTY_SQL}, mistakes, created_at) AS n
     FROM scores WHERE level = ?1
   ) WHERE n = 1`;
 
@@ -113,7 +119,7 @@ export async function onRequestPost({ request, env }) {
   await env.DB.prepare("UPDATE scores SET name = ?1 WHERE player = ?2 AND name != ?1").bind(name, b.player).run();
 
   const me = await rankOf(env.DB, level, b.player);
-  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time + b.hints * HINT_PENALTY, penalty: HINT_PENALTY, me });
+  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time + hintPenalty(b.hints), me });
 }
 
 /** Change the display name on all of a player's entries. */
