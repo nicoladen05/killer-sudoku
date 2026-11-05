@@ -36,7 +36,7 @@ const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
 /** Trim, collapse whitespace, drop control/format characters, cap at 20 chars. */
 export function cleanName(raw) {
   if (typeof raw !== "string") return "";
-  const s = raw.normalize("NFKC").replace(/[\p{C}]/gu, "").replace(/\s+/g, " ").trim();
+  const s = raw.normalize("NFKC").replace(/\s+/g, " ").replace(/[\p{C}]/gu, "").trim();
   return [...s].slice(0, 20).join("");
 }
 
