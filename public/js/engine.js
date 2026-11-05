@@ -1,6 +1,8 @@
 // Killer Sudoku engine: solver + generator. No DOM access, so it runs in a
 // Web Worker, the main thread, or Node (for tests).
 
+import { logicSolve } from "./logic.js";
+
 const FULL = 0x3fe; // bits 1..9
 
 export const rowOf = (i) => (i / 9) | 0;
@@ -240,13 +242,6 @@ function makeCages(solution, sizes, rng) {
     }));
 }
 
-export const DIFFICULTIES = {
-  easy:   { sizes: [2, 2, 2, 3, 3],    extraGivens: 14, maxGivens: 40, nodeLimit: 3000 },
-  medium: { sizes: [2, 2, 3, 3, 4],    extraGivens: 4,  maxGivens: 6,  nodeLimit: 5000 },
-  hard:   { sizes: [2, 3, 3, 4, 4, 5], extraGivens: 0,  maxGivens: 1,  nodeLimit: 20000 },
-  expert: { sizes: [3, 4, 4, 5, 6],    extraGivens: 0,  maxGivens: 0,  nodeLimit: 50000 },
-};
-
 const isConnected = (cells) => {
   if (!cells.length) return false;
   const set = new Set(cells), seen = new Set([cells[0]]), stack = [cells[0]];
@@ -282,51 +277,112 @@ function splitCage(cages, i, solution, rng) {
 }
 
 /**
- * Make the solution unique. While under the givens budget, reveal a digit
- * where two solutions differ; past it, split a cage there instead.
+ * Make the puzzle solvable by logic alone (up to `maxTier`). Whenever the
+ * logic solver gets stuck, reveal a digit at a stuck cell while under the
+ * givens budget, and split the cage there once past it.
  */
-function makeUnique(cages, solution, rng, maxGivens, nodeLimit) {
-  const givens = new Array(81).fill(0);
-  let added = 0, splits = 0;
-  for (;;) {
-    const res = solve(cages, givens, 2, nodeLimit);
-    if (res.aborted) {
-      // Too open to analyse quickly: split one of the largest cages and retry.
-      if (++splits > 20) return null;
-      const max = Math.max(...cages.map((c) => c.cells.length));
-      const big = cages.filter((c) => c.cells.length === max);
-      const pick = big[Math.floor(rng() * big.length)];
-      splitCage(cages, pick.cells[Math.floor(rng() * pick.cells.length)], solution, rng);
-      continue;
-    }
-    if (res.count === 1) return { givens, added };
-    const [a, b] = res.solutions;
-    const diff = [];
-    for (let i = 0; i < 81; i++) if (a[i] !== b[i]) diff.push(i);
-    const i = diff[Math.floor(rng() * diff.length)];
-    if (added < maxGivens || !splitCage(cages, i, solution, rng)) {
+function makeLogical(cages, givens, solution, rng, cfg) {
+  let added = givens.filter(Boolean).length;
+  for (let guard = 0; guard < 200; guard++) {
+    const res = logicSolve(cages, givens, cfg.maxTier);
+    if (!res.valid) return null;
+    if (res.solved) return res;
+    const open = [];
+    for (let i = 0; i < 81; i++) if (!res.grid[i]) open.push(i);
+    // Prefer cells with the most candidates left: that is where logic stalled hardest.
+    const most = Math.max(...open.map((i) => popcount(res.cand[i])));
+    const wide = open.filter((i) => popcount(res.cand[i]) === most);
+    const i = wide[Math.floor(rng() * wide.length)];
+    if (added < cfg.maxGivens || !splitCage(cages, i, solution, rng)) {
       givens[i] = solution[i];
       added++;
     }
   }
+  return null;
+}
+
+const meets = (res, cfg) => res.tier >= cfg.targetTier && res.hard >= cfg.minHard;
+const rank = (res) => res.tier * 1000 + res.hard;
+
+/**
+ * Make a logic-solvable puzzle harder while keeping it solvable within
+ * `maxTier`: merge neighbouring cages and take back revealed digits.
+ */
+function harden(cages, givens, solution, rng, cfg, res) {
+  const cageIdx = () => {
+    const of = new Array(81);
+    cages.forEach((c, ci) => c.cells.forEach((i) => (of[i] = ci)));
+    return of;
+  };
+  let fails = 0;
+  while (fails < cfg.hardenTries) {
+    const shown = [];
+    for (let i = 0; i < 81; i++) if (givens[i]) shown.push(i);
+    if (shown.length && rng() < 0.5) {
+      const i = shown[Math.floor(rng() * shown.length)];
+      givens[i] = 0;
+      const r = logicSolve(cages, givens, cfg.maxTier);
+      if (r.solved) { res = r; fails = 0; continue; }
+      givens[i] = solution[i];
+      fails++;
+      continue;
+    }
+    const of = cageIdx();
+    const i = Math.floor(rng() * 81);
+    const ns = neighbors(i).filter((n) => of[n] !== of[i]);
+    if (!ns.length) { fails++; continue; }
+    const a = of[i], b = of[ns[Math.floor(rng() * ns.length)]];
+    const cells = [...cages[a].cells, ...cages[b].cells];
+    const digits = new Set(cells.map((j) => solution[j]));
+    if (cells.length > cfg.maxCage || digits.size !== cells.length) { fails++; continue; }
+    const merged = { cells: cells.sort((x, y) => x - y), sum: cages[a].sum + cages[b].sum };
+    const next = cages.filter((_, ci) => ci !== a && ci !== b);
+    next.push(merged);
+    const r = logicSolve(next, givens, cfg.maxTier);
+    if (r.solved) { cages.splice(0, cages.length, ...next); res = r; fails = 0; } else fails++;
+    if (meets(res, cfg) && fails > cfg.hardenTries / 2) break;
+  }
+  return res;
 }
 
 /**
- * Generate a puzzle with a unique solution.
- * @returns {{cages, givens:number[], solution:number[], difficulty:string, seed:number}}
+ * Levels are graded by the hardest technique a puzzle needs (see logic.js):
+ * the puzzle must be solvable using techniques up to `maxTier`, and should
+ * need one of tier `targetTier`. Expert also needs several such hard steps
+ * (`minHard`), since killer cages rarely leave work for tier-4 techniques.
+ */
+export const DIFFICULTIES = {
+  easy:   { sizes: [2, 2, 2, 3, 3],    maxCage: 3, maxGivens: 40, extraGivens: 6, maxTier: 1, targetTier: 1, minHard: 0, hardenTries: 0 },
+  medium: { sizes: [2, 2, 3, 3, 4],    maxCage: 4, maxGivens: 6,  extraGivens: 0, maxTier: 2, targetTier: 2, minHard: 0, hardenTries: 30 },
+  hard:   { sizes: [2, 3, 3, 4, 4, 5], maxCage: 5, maxGivens: 0,  extraGivens: 0, maxTier: 3, targetTier: 3, minHard: 1, hardenTries: 60 },
+  expert: { sizes: [3, 4, 4, 5, 6],    maxCage: 6, maxGivens: 0,  extraGivens: 0, maxTier: 4, targetTier: 3, minHard: 2, hardenTries: 80 },
+};
+
+/**
+ * Generate a puzzle with a unique solution that can be solved by logic alone.
+ * @returns {{cages, givens:number[], solution:number[], difficulty:string, tier:number, techniques:Object, seed:number}}
  */
 export function generate(difficulty = "medium", seed = (Math.random() * 2 ** 32) >>> 0) {
   const cfg = DIFFICULTIES[difficulty] || DIFFICULTIES.medium;
   const rng = mulberry32(seed);
   let best = null;
-  while (!best) {
+  for (let attempt = 0; attempt < 8 || !best; attempt++) {
     const solution = randomSolution(rng);
     const cages = makeCages(solution, cfg.sizes, rng);
-    const res = makeUnique(cages, solution, rng, cfg.maxGivens, cfg.nodeLimit);
-    if (res) best = { cages, givens: res.givens, solution };
+    const givens = new Array(81).fill(0);
+    let res = makeLogical(cages, givens, solution, rng, cfg);
+    if (!res) continue;
+    if (cfg.hardenTries) res = harden(cages, givens, solution, rng, cfg, res);
+    // Logic proves uniqueness already; the brute-force solver double-checks it.
+    const check = solve(cages, givens, 2, 30000);
+    if (check.count > 1 || (!check.aborted && check.count !== 1)) continue;
+    const cand = { cages, givens, solution, tier: res.tier, techniques: res.used, res };
+    if (!best || rank(res) > rank(best.res)) best = cand;
+    if (meets(best.res, cfg)) break;
   }
-  // Easier levels reveal some extra digits on top of what uniqueness needs.
+  // Easy reveals a few extra digits on top of what logic needs.
   const free = shuffle([...Array(81).keys()].filter((i) => !best.givens[i]), rng);
   for (let k = 0; k < cfg.extraGivens && k < free.length; k++) best.givens[free[k]] = best.solution[free[k]];
-  return { ...best, difficulty, seed };
+  const { res, ...puzzle } = best;
+  return { ...puzzle, difficulty, seed };
 }
