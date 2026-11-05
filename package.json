@@ -1,0 +1,12 @@
+{
+  "name": "cagey-killer-sudoku",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A minimalist Killer Sudoku. Static site, no build step.",
+  "scripts": {
+    "dev": "npx --yes serve public -l 8080",
+    "test": "node --test",
+    "deploy": "npx --yes wrangler pages deploy public --project-name cagey"
+  }
+}

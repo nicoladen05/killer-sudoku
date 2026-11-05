@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="A calm, minimalist Killer Sudoku. No ads, no clutter.">
+  <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121316" media="(prefers-color-scheme: dark)">
+  <title>Cagey · Killer Sudoku</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/style.css">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    try { const t = localStorage.getItem("cagey:theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <main class="app">
+    <section class="board-area">
+      <div class="board" id="board" aria-label="Sudoku board" role="grid">
+        <svg class="cages" id="cages" aria-hidden="true"></svg>
+        <div class="pause-cover" id="pauseCover" hidden>
+          <button class="resume" id="resumeBtn" type="button" aria-label="Resume">
+            <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <header class="topbar">
+        <h1 class="brand">Cagey</h1>
+        <div class="top-actions">
+          <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle dark mode" title="Theme">
+            <svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
+            <svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+          </button>
+          <button class="icon-btn" id="newBtn" type="button" aria-label="New game" title="New game">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-label">Level</span>
+          <span class="stat-value" id="levelLabel">Medium</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Mistakes</span>
+          <span class="stat-value" id="mistakes">0/3</span>
+        </div>
+        <div class="stat stat-time">
+          <span class="stat-label">Time</span>
+          <span class="stat-value"><span id="timer">00:00</span>
+            <button class="pause-btn" id="pauseBtn" type="button" aria-label="Pause" title="Pause (P)">
+              <svg class="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg>
+              <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+
+      <div class="tools">
+        <button class="tool" id="undoBtn" type="button" title="Undo (Ctrl+Z)">
+          <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+          <span>Undo</span>
+        </button>
+        <button class="tool" id="eraseBtn" type="button" title="Erase (Backspace)">
+          <svg viewBox="0 0 24 24"><path d="M20 20H8.5L3.7 15.2a1.5 1.5 0 0 1 0-2.1L13.4 3.4a1.5 1.5 0 0 1 2.1 0l5 5a1.5 1.5 0 0 1 0 2.1L11 20"/><path d="m8.5 8.5 7 7"/></svg>
+          <span>Erase</span>
+        </button>
+        <button class="tool" id="notesBtn" type="button" aria-pressed="false" title="Notes (N)">
+          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          <span>Notes</span>
+          <em class="badge" id="notesBadge">off</em>
+        </button>
+        <button class="tool" id="hintBtn" type="button" title="Hint (H)">
+          <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/></svg>
+          <span>Hint</span>
+        </button>
+      </div>
+
+      <div class="keypad" id="keypad"></div>
+
+      <p class="area-hint" id="areaHint">Drag across a row, column or box to see which numbers it still needs.</p>
+    </aside>
+  </main>
+
+  <dialog class="dialog" id="newDialog">
+    <form method="dialog">
+      <h2>New game</h2>
+      <div class="levels">
+        <button value="easy">Easy</button>
+        <button value="medium">Medium</button>
+        <button value="hard">Hard</button>
+        <button value="expert">Expert</button>
+      </div>
+      <button class="link" value="cancel">Cancel</button>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="endDialog">
+    <form method="dialog">
+      <h2 id="endTitle">Solved</h2>
+      <p id="endText"></p>
+      <div class="end-actions">
+        <button value="continue" id="continueBtn">Keep playing</button>
+        <button value="new" class="primary">New game</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="loading" id="loading" hidden><span></span>Building puzzle…</div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
