@@ -61,6 +61,7 @@ let game = null;
 let selected = -1;
 let notesMode = false;
 let area = null; // { type: "row"|"col"|"box", index, cells:number[] }
+let areaFocus = -1; // far end of a shift+arrow / shift-click area; `selected` is the anchor
 let cageOf = new Array(81);
 let paused = false;
 
@@ -209,6 +210,7 @@ function render() {
     el.classList.toggle("peer", !areaSet && peer);
     el.classList.toggle("same", !areaSet && selVal !== 0 && v === selVal && i !== sel);
     el.classList.toggle("area", !!areaSet && areaSet.has(i));
+    el.classList.toggle("area-focus", !!areaSet && i === areaFocus && i !== sel);
     el.classList.toggle("conflict", conflict.has(i));
     el.classList.toggle("given", isGiven(i));
     el.classList.toggle("wrong", v !== 0 && !isCorrect(i));
@@ -419,6 +421,15 @@ $("newDialog").addEventListener("close", () => {
 
 // ---------- Selection and area dragging ----------
 
+/** The row, column or box holding both cells (row, then column, then box), or null. */
+function sharedUnit(a, b) {
+  const u =
+    rowOf(a) === rowOf(b) ? { type: "row", index: rowOf(a) } :
+    colOf(a) === colOf(b) ? { type: "col", index: colOf(a) } :
+    boxOf(a) === boxOf(b) ? { type: "box", index: boxOf(a) } : null;
+  return u && { ...u, cells: unitCells(u.type, u.index) };
+}
+
 /** The unit containing `start` that covers most of `list` (row, then column, then box on ties). */
 function unitFor(start, list) {
   const options = [
@@ -449,18 +460,15 @@ board.addEventListener("pointerdown", (e) => {
 
   // Desktop: shift-click marks the unit shared with the selected cell.
   if (e.shiftKey && selected >= 0 && selected !== i) {
-    const a = selected;
-    area =
-      rowOf(a) === rowOf(i) ? { type: "row", index: rowOf(a) } :
-      colOf(a) === colOf(i) ? { type: "col", index: colOf(a) } :
-      boxOf(a) === boxOf(i) ? { type: "box", index: boxOf(a) } : null;
-    if (area) area.cells = unitCells(area.type, area.index);
+    area = sharedUnit(selected, i);
+    areaFocus = area ? i : -1;
     render();
     return;
   }
 
   selected = i;
   area = null;
+  areaFocus = -1;
   drag = { start: i, visited: [i], pointerId: e.pointerId };
   board.setPointerCapture(e.pointerId);
   render();
@@ -526,6 +534,8 @@ document.addEventListener("keydown", (e) => {
   const moves = { ArrowUp: -9, ArrowDown: 9, ArrowLeft: -1, ArrowRight: 1 };
   if (k in moves && game && !paused) {
     e.preventDefault();
+    if (e.shiftKey && selected >= 0) { extendArea(k); return; }
+    areaFocus = -1;
     if (selected < 0) selected = 40;
     else {
       const r = rowOf(selected), c = colOf(selected);
@@ -534,10 +544,32 @@ document.addEventListener("keydown", (e) => {
       if (k === "ArrowLeft") selected = r * 9 + ((c + 8) % 9);
       if (k === "ArrowRight") selected = r * 9 + ((c + 1) % 9);
     }
-    if (!e.shiftKey) area = null;
+    area = null;
     render();
   }
 });
+
+/**
+ * Shift+arrow: keyboard twin of shift-click. The selected cell stays put as the
+ * anchor and a focus cell moves away from it; the area is the unit holding both.
+ * Moves that would leave every unit shared with the anchor are ignored, so
+ * Shift+Right/Left sweep the row, Shift+Up/Down the column, and turning a corner
+ * (e.g. Shift+Right then Shift+Down) switches to the box.
+ */
+function extendArea(key) {
+  const from = area && areaFocus >= 0 ? areaFocus : selected;
+  const r = rowOf(from), c = colOf(from);
+  const [dr, dc] = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[key];
+  const nr = r + dr, nc = c + dc;
+  if (nr < 0 || nr > 8 || nc < 0 || nc > 8) return;
+  const to = nr * 9 + nc;
+  if (to === selected) { area = null; areaFocus = -1; render(); return; }
+  const unit = sharedUnit(selected, to);
+  if (!unit) return;
+  area = unit;
+  areaFocus = to;
+  render();
+}
 
 new ResizeObserver(() => drawCages()).observe(board);
 

@@ -21,7 +21,7 @@ When the solver gets stuck, the generator reveals a digit or splits a cage at th
 - Board on the left, controls on the right (stacked on phones in portrait).
 - Number pad with remaining counts, Undo, Erase, Notes and Hint.
 - Mistake counter (three mistakes ends the game, or keep playing without a limit) and a timer that pauses when the tab is hidden.
-- **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit) to highlight it. The keypad then lights up the numbers that area is still missing.
+- **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit, or hold Shift and press the arrow keys) to highlight it. The keypad then lights up the numbers that area is still missing.
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
 
@@ -31,6 +31,7 @@ When the solver gets stuck, the generator reveals a digit or splits a cage at th
 | --- | --- |
 | `1`–`9` | Enter digit (or note in notes mode) |
 | Arrows | Move selection |
+| `Shift` + arrows | Mark the row (left/right) or column (up/down) of the selected cell; turn a corner to mark its box |
 | `Backspace` / `Delete` / `0` | Erase |
 | `N` | Toggle notes |
 | `H` | Hint |

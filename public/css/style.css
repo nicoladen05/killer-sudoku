@@ -154,6 +154,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .cell.peer { background: var(--peer); }
 .cell.same { background: var(--same); }
 .cell.area { background: var(--area); }
+.cell.area-focus { box-shadow: inset 0 0 0 2px var(--area-strong); }
 .cell.conflict { background: var(--error-soft); }
 .cell.selected { background: var(--selected); }
 
