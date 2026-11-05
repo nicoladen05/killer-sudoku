@@ -1,4 +1,4 @@
-# Cagey
+# Killer Sudoku
 
 A calm, minimalist Killer Sudoku for desktop and touch screens. No ads, no accounts, no tracking. Plain HTML, CSS and JavaScript with no build step, plus one small Pages Function for the leaderboard.
 

@@ -233,7 +233,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .panel { display: flex; flex-direction: column; gap: 20px; }
 
 .topbar { display: flex; align-items: center; justify-content: space-between; }
-.brand { margin: 0; font-size: 1.35rem; font-weight: 650; letter-spacing: -0.02em; }
+.brand { margin: 0; font-size: 1.35rem; font-weight: 650; letter-spacing: -0.02em; white-space: nowrap; }
 .top-actions { display: flex; gap: 6px; }
 .icon-btn {
   width: 40px; height: 40px;
