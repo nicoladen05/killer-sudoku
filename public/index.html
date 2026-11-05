@@ -32,6 +32,9 @@
       <header class="topbar">
         <h1 class="brand">Cagey</h1>
         <div class="top-actions">
+          <button class="icon-btn" id="boardBtn" type="button" aria-label="Leaderboard" title="Leaderboard">
+            <svg viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4"/><path d="M12 13v4M8.5 20h7M10 17h4"/></svg>
+          </button>
           <button class="icon-btn" id="themeBtn" type="button" aria-label="Toggle dark mode" title="Theme">
             <svg class="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></svg>
             <svg class="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
@@ -103,12 +106,45 @@
   </dialog>
 
   <dialog class="dialog" id="endDialog">
+    <h2 id="endTitle">Solved</h2>
+    <p id="endText"></p>
+    <form class="lb-submit" id="lbForm" hidden>
+      <label for="lbName">Add your time to the leaderboard</label>
+      <div class="lb-row">
+        <input id="lbName" name="name" maxlength="20" autocomplete="nickname" placeholder="Your name" required>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+    <p class="lb-status" id="lbStatus" hidden></p>
     <form method="dialog">
-      <h2 id="endTitle">Solved</h2>
-      <p id="endText"></p>
       <div class="end-actions">
         <button value="continue" id="continueBtn">Keep playing</button>
         <button value="new" class="primary">New game</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog dialog-wide" id="boardDialog" aria-labelledby="boardTitle">
+    <div class="lb-head">
+      <h2 id="boardTitle">Leaderboard</h2>
+      <form method="dialog"><button class="icon-btn" aria-label="Close" value="close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button></form>
+    </div>
+    <div class="lb-tabs" id="lbTabs" role="tablist">
+      <button role="tab" data-level="easy">Easy</button>
+      <button role="tab" data-level="medium">Medium</button>
+      <button role="tab" data-level="hard">Hard</button>
+      <button role="tab" data-level="expert">Expert</button>
+      <button role="tab" data-level="master">Master</button>
+    </div>
+    <div class="lb-list" id="lbList" role="tabpanel"></div>
+    <div class="lb-me" id="lbMe"></div>
+    <form class="lb-foot" id="lbNameForm">
+      <span id="lbPlayingAs"></span>
+      <div class="lb-row" id="lbRenameRow" hidden>
+        <input id="lbRename" maxlength="20" autocomplete="nickname" placeholder="Your name" required>
+        <button type="submit">Save</button>
       </div>
     </form>
   </dialog>

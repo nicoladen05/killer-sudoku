@@ -1,6 +1,6 @@
 # Cagey
 
-A calm, minimalist Killer Sudoku for desktop and touch screens. No ads, no accounts, no tracking. Plain HTML, CSS and JavaScript with no build step.
+A calm, minimalist Killer Sudoku for desktop and touch screens. No ads, no accounts, no tracking. Plain HTML, CSS and JavaScript with no build step, plus one small Pages Function for the leaderboard.
 
 ## Features
 
@@ -25,6 +25,7 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 - Number pad with remaining counts, Undo, Erase, Notes and Hint.
 - Mistake counter (three mistakes ends the game, or keep playing without a limit) and a timer that pauses when the tab is hidden.
 - **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit, or hold Shift and press the arrow keys) to highlight it. The keypad then lights up the numbers that area is still missing.
+- **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. Each player shows with their best time, ranked by time, then mistakes, then hints. Games continued past three mistakes don't count.
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
 
@@ -47,6 +48,10 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 ```sh
 npm run dev    # serves ./public on http://localhost:8080
 npm test       # checks puzzles are valid, unique and solvable by logic
+
+# with the leaderboard API (local D1 database):
+npm run db:local   # create the table once
+npm run dev:full   # http://localhost:8788
 ```
 
 Any static file server works, for example `python3 -m http.server -d public`.
@@ -70,6 +75,15 @@ npx wrangler login
 npm run deploy
 ```
 
+### Leaderboard backend
+
+`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is `migrations/0001_scores.sql`.
+
+- `GET /api/scores?level=hard&player=<id>`: top 50 (best time per player) and your own rank.
+- `POST /api/scores`: post a solve. `PUT /api/scores`: rename a player.
+
+The game runs in the browser, so results can't be proven. The API only keeps out junk: valid level, a minimum believable time per level, at most 2 mistakes, a cleaned name of up to 20 characters, one entry per player per puzzle, and at most 20 posts per hour (100 per day) from one IP. IPs are stored only as a hash salted with the date.
+
 ## Layout
 
 ```
@@ -77,9 +91,12 @@ public/
   index.html        markup
   css/style.css     styles and light/dark themes
   js/app.js         UI, input, persistence
+  js/leaderboard.js leaderboard API client
   js/engine.js      brute-force solver and puzzle generator (no DOM, also used by tests)
   js/logic.js       human-style logic solver used to accept and grade puzzles
   js/worker.js      runs the generator off the main thread
   _headers          Cloudflare Pages response headers
+functions/api/scores.js  leaderboard API (Pages Function + D1)
+migrations/        D1 schema
 test/               node:test suite for the engine
 ```

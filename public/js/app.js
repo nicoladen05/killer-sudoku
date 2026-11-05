@@ -1,4 +1,5 @@
 import { rowOf, colOf, boxOf } from "./engine.js";
+import * as lb from "./leaderboard.js";
 
 const MAX_MISTAKES = 3;
 const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
@@ -93,6 +94,7 @@ function newGameState(puzzle) {
     status: "playing",
     history: [],
     unlimited: false,
+    hints: 0,
   };
 }
 
@@ -355,6 +357,7 @@ function hint() {
     selected = i;
   }
   const d = game.puzzle.solution[i];
+  game.hints = (game.hints || 0) + 1;
   const affected = [i, ...peersOf(i).filter((j) => !game.values[j] && game.notes[j] & (1 << d))];
   game.history.push({ cells: snapshot(affected) });
   game.values[i] = d;
@@ -377,8 +380,146 @@ function finish(won) {
     ? `${LEVELS[game.puzzle.difficulty]} puzzle in ${fmt(Math.floor(game.elapsed))} with ${game.mistakes} mistake${game.mistakes === 1 ? "" : "s"}.`
     : "That's the limit. You can start over, or keep going without a mistake limit.";
   $("continueBtn").hidden = won;
+  $("endDialog").returnValue = "";
+  setupSubmit(won);
   setTimeout(() => $("endDialog").showModal(), won ? 350 : 0);
 }
+
+// ---------- Leaderboard ----------
+
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/** The solve that just finished, waiting for a name before it is posted. */
+let solve = null;
+
+function lbStatus(text, isError = false) {
+  const el = $("lbStatus");
+  el.hidden = !text;
+  el.classList.toggle("error", isError);
+  el.innerHTML = text || "";
+}
+
+async function setupSubmit(won) {
+  solve = null;
+  $("lbForm").hidden = true;
+  lbStatus("");
+  if (!won) return;
+  if (game.unlimited) { lbStatus("Games played past three mistakes don't go on the leaderboard."); return; }
+  const g = game;
+  solve = {
+    level: g.puzzle.difficulty,
+    time: Math.floor(g.elapsed),
+    mistakes: g.mistakes,
+    hints: g.hints || 0,
+    puzzle: g.puzzle.hash || (g.puzzle.hash = await lb.puzzleHash(g.puzzle)),
+  };
+  if (g.posted) { showPosted(g.posted); return; }
+  if (lb.getName()) postSolve();
+  else { $("lbForm").hidden = false; $("lbName").value = ""; }
+}
+
+function showPosted(r) {
+  const me = r.me;
+  const name = escapeHtml(me?.name || lb.getName());
+  const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${LEVELS[solve.level]}.` : "";
+  const note = r.best === false && me ? ` Your best is still ${fmt(me.time)}.` : "";
+  lbStatus(`Posted as ${name}.${where}${note} <button type="button" class="link-inline" data-open-board>See leaderboard</button>`);
+}
+
+async function postSolve() {
+  if (!solve) return;
+  const g = game;
+  lbStatus("Posting to the leaderboard…");
+  try {
+    const r = await lb.submitScore(solve);
+    g.posted = r; save();
+    showPosted(r);
+  } catch (e) {
+    lbStatus(e.status ? escapeHtml(e.message) : "Couldn't reach the leaderboard. It will be posted next time you're online.", true);
+  }
+}
+
+$("lbForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const name = $("lbName").value.trim();
+  if (!name) return;
+  lb.setName(name);
+  $("lbForm").hidden = true;
+  postSolve();
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("[data-open-board]")) return;
+  $("endDialog").close("board");
+  openBoard(solve?.level);
+});
+
+let boardLevel = null;
+async function openBoard(level) {
+  boardLevel = level || game?.puzzle.difficulty || "medium";
+  renderPlayingAs();
+  if (!$("boardDialog").open) $("boardDialog").showModal();
+  loadBoard();
+}
+
+function renderPlayingAs() {
+  const name = lb.getName();
+  $("lbRenameRow").hidden = true;
+  $("lbPlayingAs").innerHTML = name
+    ? `Playing as <b>${escapeHtml(name)}</b> · <button type="button" class="link-inline" id="lbChange">Change name</button>`
+    : "Solve a puzzle to add your time.";
+}
+
+async function loadBoard() {
+  const level = boardLevel;
+  for (const t of $("lbTabs").children) {
+    const on = t.dataset.level === level;
+    t.classList.toggle("current", on);
+    t.setAttribute("aria-selected", on);
+  }
+  const list = $("lbList");
+  list.innerHTML = `<p class="lb-empty">Loading…</p>`;
+  $("lbMe").innerHTML = "";
+  let data;
+  try { data = await lb.fetchScores(level); }
+  catch (e) { if (level === boardLevel) list.innerHTML = `<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
+  if (level !== boardLevel) return;
+  if (!data.entries.length) { list.innerHTML = `<p class="lb-empty">No times yet. Be the first.</p>`; return; }
+  list.innerHTML = `<ol>${data.entries.map((r) => `
+    <li class="${r.me ? "me" : ""}">
+      <span class="lb-rank">${r.rank}</span>
+      <span class="lb-name">${escapeHtml(r.name)}</span>
+      <span class="lb-extra">${[r.mistakes ? plural(r.mistakes, "mistake") : "", r.hints ? plural(r.hints, "hint") : ""].filter(Boolean).join(" · ")}</span>
+      <span class="lb-time">${fmt(r.time)}</span>
+    </li>`).join("")}</ol>`;
+  const me = data.me;
+  if (me && !data.entries.some((r) => r.me)) {
+    $("lbMe").innerHTML = `Your best: <b>${fmt(me.time)}</b>, #${me.rank} of ${me.total}`;
+  }
+}
+
+$("boardBtn").addEventListener("click", () => openBoard());
+$("lbTabs").addEventListener("click", (e) => {
+  const t = e.target.closest("[data-level]");
+  if (t) { boardLevel = t.dataset.level; loadBoard(); }
+});
+$("lbNameForm").addEventListener("click", (e) => {
+  if (!e.target.closest("#lbChange")) return;
+  $("lbPlayingAs").innerHTML = "";
+  $("lbRenameRow").hidden = false;
+  $("lbRename").value = lb.getName();
+  $("lbRename").focus();
+  $("lbRename").select();
+});
+$("lbNameForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("lbRename").value.trim();
+  if (!name) return;
+  try { await lb.renameEverywhere(name); } catch {}
+  renderPlayingAs();
+  loadBoard();
+});
 
 $("endDialog").addEventListener("close", () => {
   const v = $("endDialog").returnValue;
@@ -576,6 +717,7 @@ new ResizeObserver(() => drawCages()).observe(board);
 // ---------- Boot ----------
 
 buildBoard();
+lb.retryPending();
 
 const saved = store.get(STORE.game);
 if (saved && saved.puzzle && saved.status === "playing") {
