@@ -377,7 +377,8 @@ function finish(won) {
   render();
   $("endTitle").textContent = won ? "Solved" : "Three mistakes";
   $("endText").textContent = won
-    ? `${LEVELS[game.puzzle.difficulty]} puzzle in ${fmt(Math.floor(game.elapsed))} with ${game.mistakes} mistake${game.mistakes === 1 ? "" : "s"}.`
+    ? `${LEVELS[game.puzzle.difficulty]} puzzle in ${fmt(Math.floor(game.elapsed))} with ${game.mistakes} mistake${game.mistakes === 1 ? "" : "s"}.` +
+      (game.hints ? ` ${plural(game.hints, "hint")} add${game.hints === 1 ? "s" : ""} ${game.hints * HINT_PENALTY} seconds, so your leaderboard time is ${fmt(Math.floor(game.elapsed) + game.hints * HINT_PENALTY)}.` : "")
     : "That's the limit. You can start over, or keep going without a mistake limit.";
   $("continueBtn").hidden = won;
   $("endDialog").returnValue = "";
@@ -388,6 +389,8 @@ function finish(won) {
 // ---------- Leaderboard ----------
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+/** Must match HINT_PENALTY in functions/api/scores.js. */
+const HINT_PENALTY = 30;
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** The solve that just finished, waiting for a name before it is posted. */
@@ -490,7 +493,7 @@ async function loadBoard() {
     <li class="${r.me ? "me" : ""}">
       <span class="lb-rank">${r.rank}</span>
       <span class="lb-name">${escapeHtml(r.name)}</span>
-      <span class="lb-extra">${[r.mistakes ? plural(r.mistakes, "mistake") : "", r.hints ? plural(r.hints, "hint") : ""].filter(Boolean).join(" · ")}</span>
+      <span class="lb-extra">${[r.mistakes ? plural(r.mistakes, "mistake") : "", r.hints ? `${plural(r.hints, "hint")} +${r.hints * HINT_PENALTY}s` : ""].filter(Boolean).join(" · ")}</span>
       <span class="lb-time">${fmt(r.time)}</span>
     </li>`).join("")}</ol>`;
   const me = data.me;

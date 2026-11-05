@@ -1,6 +1,9 @@
 // Leaderboard API (Cloudflare Pages Function, D1 binding `DB`).
 //
 //   GET  /api/scores?level=hard[&player=<id>]  -> best time per player, top 50
+//
+// Ranked time = solve time + HINT_PENALTY seconds per hint; `time` in responses
+// is that ranked time and `raw` the clock time.
 //   POST /api/scores  { level, player, name, time, mistakes, hints, puzzle }
 //
 // The game runs entirely in the browser, so a result can't be proven. These
@@ -13,6 +16,8 @@ const MIN_TIME = { easy: 20, medium: 30, hard: 45, expert: 60, master: 90 };
 const MAX_TIME = 24 * 3600;
 const TOP = 50;
 const RATE = { perHour: 20, perDay: 100 };
+/** Seconds added to the ranked time for each hint used. */
+export const HINT_PENALTY = 30;
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -38,20 +43,19 @@ async function ipHash(request) {
 }
 
 const BEST = `
-  SELECT player, name, time, mistakes, hints, created_at FROM (
-    SELECT player, name, time, mistakes, hints, created_at,
-           ROW_NUMBER() OVER (PARTITION BY player ORDER BY time, mistakes, hints, created_at) AS n
+  SELECT player, name, score, time, mistakes, hints, created_at FROM (
+    SELECT player, name, time + hints * ${HINT_PENALTY} AS score, time, mistakes, hints, created_at,
+           ROW_NUMBER() OVER (PARTITION BY player ORDER BY time + hints * ${HINT_PENALTY}, mistakes, created_at) AS n
     FROM scores WHERE level = ?1
   ) WHERE n = 1`;
 
 async function rankOf(db, level, player) {
   const row = await db
     .prepare(`WITH best AS (${BEST}) SELECT
-        (SELECT COUNT(*) FROM best b WHERE b.time < me.time
-           OR (b.time = me.time AND (b.mistakes < me.mistakes
-           OR (b.mistakes = me.mistakes AND (b.hints < me.hints
-           OR (b.hints = me.hints AND b.created_at < me.created_at)))))) + 1 AS rank,
-        me.time, me.mistakes, me.hints, me.name,
+        (SELECT COUNT(*) FROM best b WHERE b.score < me.score
+           OR (b.score = me.score AND (b.mistakes < me.mistakes
+           OR (b.mistakes = me.mistakes AND b.created_at < me.created_at)))) + 1 AS rank,
+        me.score AS time, me.time AS raw, me.mistakes, me.hints, me.name,
         (SELECT COUNT(*) FROM best) AS total
       FROM best me WHERE me.player = ?2`)
     .bind(level, player)
@@ -64,14 +68,14 @@ export async function onRequestGet({ request, env }) {
   const level = url.searchParams.get("level");
   if (!LEVELS.includes(level)) return json({ error: "bad level" }, 400);
   const { results } = await env.DB
-    .prepare(`${BEST} ORDER BY time, mistakes, hints, created_at LIMIT ${TOP}`)
+    .prepare(`${BEST} ORDER BY score, mistakes, created_at LIMIT ${TOP}`)
     .bind(level)
     .all();
   const player = url.searchParams.get("player");
   const me = player && /^[a-z0-9-]{8,40}$/.test(player) ? await rankOf(env.DB, level, player) : null;
   return json({
     level,
-    entries: results.map((r, i) => ({ rank: i + 1, name: r.name, time: r.time, mistakes: r.mistakes, hints: r.hints, me: r.player === player })),
+    entries: results.map((r, i) => ({ rank: i + 1, name: r.name, time: r.score, raw: r.time, mistakes: r.mistakes, hints: r.hints, me: r.player === player })),
     me,
   });
 }
@@ -109,7 +113,7 @@ export async function onRequestPost({ request, env }) {
   await env.DB.prepare("UPDATE scores SET name = ?1 WHERE player = ?2 AND name != ?1").bind(name, b.player).run();
 
   const me = await rankOf(env.DB, level, b.player);
-  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time, me });
+  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time + b.hints * HINT_PENALTY, penalty: HINT_PENALTY, me });
 }
 
 /** Change the display name on all of a player's entries. */

@@ -25,7 +25,7 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 - Number pad with remaining counts, Undo, Erase, Notes and Hint.
 - Mistake counter (three mistakes ends the game, or keep playing without a limit) and a timer that pauses when the tab is hidden.
 - **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit, or hold Shift and press the arrow keys) to highlight it. The keypad then lights up the numbers that area is still missing.
-- **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. Each player shows with their best time, ranked by time, then mistakes, then hints. Games continued past three mistakes don't count.
+- **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. Each player shows with their best time, ranked by time (each hint adds 30 seconds), then mistakes. Games continued past three mistakes don't count.
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
 
