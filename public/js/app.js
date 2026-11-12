@@ -841,6 +841,8 @@ function renderCode(error = "") {
   $("syncRetry").hidden = !error;
   $("syncCopyCode").disabled = $("syncCopyLink").disabled = !code;
   $("syncTimer").hidden = !code;
+  $("syncRefresh").hidden = !!error;
+  $("syncRefresh").disabled = !code;
   // A new code: the characters come in one after another.
   if (code && code !== shownCode) {
     tiles.querySelectorAll(".sync-tile, .sync-dash").forEach((t, i) => enter(t, { y: 6, blur: 2, delay: i * 30, duration: 220 }));
@@ -858,11 +860,14 @@ function tick() {
   if (!left) { myCode = null; loadCode(); }
 }
 
-/** Show this player's code, reusing the current one while it has more than a minute left. */
-async function loadCode() {
+/**
+ * Show this player's code, reusing the current one while it has more than a minute left.
+ * `renew` always gets a new one (the server then cancels the old code).
+ */
+async function loadCode(renew = false) {
   clearInterval(codeTimer);
   codeTimer = setInterval(tick, 1000);
-  const fresh = myCode && myCode.player === lb.playerId() && myCode.expires - Date.now() > 60000;
+  const fresh = !renew && myCode && myCode.player === lb.playerId() && myCode.expires - Date.now() > 60000;
   if (!fresh) {
     myCode = null;
     renderCode();
@@ -870,7 +875,7 @@ async function loadCode() {
     codeLoading = true;
     try {
       await syncStreak(); // so the other device gets every day
-      const { code, expires } = await lb.makeSyncCode();
+      const { code, expires } = await lb.makeSyncCode(renew);
       myCode = { code, player: lb.playerId(), expires: Date.now() + expires * 1000 };
     } catch (e) {
       clearInterval(codeTimer);
@@ -883,7 +888,15 @@ async function loadCode() {
   renderCode();
   tick();
 }
-$("syncRetry").addEventListener("click", loadCode);
+$("syncRetry").addEventListener("click", () => loadCode());
+
+// A code works once: after another device used it, get a new one here.
+$("syncRefresh").addEventListener("click", () => {
+  const icon = $("syncRefresh").querySelector("svg");
+  if (!reduceMotion.matches) icon.animate([{ transform: "rotate(0)" }, { transform: "rotate(360deg)" }], { duration: 450, easing: EASE_OUT });
+  syncStatus("");
+  loadCode(true);
+});
 
 /** Swap a button's label for a moment ("Copied"), crossfading the label and icon with a slight blur. */
 function flash(btn, text) {

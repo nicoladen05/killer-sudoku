@@ -108,10 +108,39 @@ test("a player who never set a name takes the other device's name", async () => 
   assert.deepEqual(scoresOf(env.DB, A), [{ name: "Phone", puzzle: "p2", time: 500 }]);
 });
 
+test("asking again hands back the current code; renewing replaces it", async () => {
+  const env = { DB: testDb() };
+  const [, first] = await call(makeCode, env, "POST", { player: A, name: "Ann" });
+  const [, again] = await call(makeCode, env, "POST", { player: A, name: "Annie" });
+  assert.equal(again.code, first.code);
+  assert.ok(again.expires <= TTL && again.expires > TTL - 5);
+  const [, renewed] = await call(makeCode, env, "POST", { player: A, name: "Annie", renew: true });
+  assert.notEqual(renewed.code, first.code);
+  assert.equal((await call(useCode, env, "PUT", { code: first.code, player: B }))[0], 404);
+  // The name sent last is the one the other device gets.
+  const [, used] = await call(useCode, env, "PUT", { code: renewed.code, player: B });
+  assert.equal(used.name, "Annie");
+  // A code about to expire is replaced instead of handed back.
+  const [, next] = await call(makeCode, env, "POST", { player: A });
+  env.DB.raw.prepare("UPDATE sync_codes SET created_at = created_at - ?").run(TTL - 30);
+  const [, fresh] = await call(makeCode, env, "POST", { player: A });
+  assert.notEqual(fresh.code, next.code);
+  assert.equal(fresh.expires, TTL);
+});
+
+test("only new codes count toward the per-IP limit", async () => {
+  const env = { DB: testDb() };
+  for (let i = 0; i < 100; i++) assert.equal((await call(makeCode, env, "POST", { player: A }))[0], 200); // same code each time
+  const statuses = [];
+  for (let i = 0; i < 60; i++) statuses.push((await call(makeCode, env, "POST", { player: A, renew: true }))[0]); // the first request above made code 1 of 60
+  assert.deepEqual(statuses.slice(-2), [200, 429]);
+  assert.equal((await call(makeCode, env, "POST", { player: A, renew: true }, "5.6.7.8"))[0], 200, "another network is unaffected");
+});
+
 test("codes expire, a new code replaces the old one, and wrong guesses are limited", async () => {
   const env = { DB: testDb() };
   const [, first] = await call(makeCode, env, "POST", { player: A, name: "Ann" });
-  const [, second] = await call(makeCode, env, "POST", { player: A, name: "Ann" });
+  const [, second] = await call(makeCode, env, "POST", { player: A, name: "Ann", renew: true });
   assert.equal((await call(useCode, env, "PUT", { code: first.code, player: B }))[0], 404);
 
   env.DB.raw.prepare("UPDATE sync_codes SET created_at = created_at - ?").run(TTL);

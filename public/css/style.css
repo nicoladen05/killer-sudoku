@@ -560,6 +560,19 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .sync-card-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--muted); }
 .sync-timer { display: flex; align-items: center; gap: 5px; font-size: 12px; font-variant-numeric: tabular-nums; transition: color 300ms ease; }
 .sync-timer.ending { color: var(--warm); }
+.sync-card-tools { display: flex; align-items: center; gap: 6px; margin: -6px -8px -6px 0; }
+.sync-refresh {
+  position: relative; width: 28px; height: 28px; padding: 0; display: grid; place-items: center;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted);
+  transition: transform 160ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+.sync-refresh::before { content: ""; position: absolute; inset: -8px; } /* 44px to tap, 28px to see */
+.sync-refresh:active:not(:disabled) { transform: scale(0.92); }
+.sync-refresh:disabled { opacity: 0.4; }
+.sync-refresh svg { width: 16px; height: 16px; }
+@media (hover: hover) and (pointer: fine) {
+  .sync-refresh:hover:not(:disabled) { background: var(--btn-hover); color: var(--text); }
+}
 .sync-timer svg { width: 13px; height: 13px; }
 .sync-tiles { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .sync-tile {

@@ -85,9 +85,12 @@ export function syncStreak(dates) {
   return call("POST", { player: playerId(), dates }, "", "/api/streak");
 }
 
-/** A one-time code (valid 15 minutes) that moves this player to another device. */
-export function makeSyncCode() {
-  return call("POST", { player: playerId(), name: getName() }, "", "/api/sync");
+/**
+ * A one-time code (valid 15 minutes) that moves this player to another device.
+ * The current code comes back while it has time left; `renew` always makes a new one.
+ */
+export function makeSyncCode(renew = false) {
+  return call("POST", { player: playerId(), name: getName(), ...(renew ? { renew: true } : {}) }, "", "/api/sync");
 }
 
 /** What entering a code would do, as { same, device, player, merged } counts. The code stays valid. */

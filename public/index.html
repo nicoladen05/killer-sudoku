@@ -176,10 +176,15 @@
       <section class="sync-card" aria-labelledby="syncCodeLabel">
         <div class="sync-card-head">
           <span id="syncCodeLabel">Your code</span>
-          <span class="sync-timer" id="syncTimer" title="Time left before this code expires" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-            <span id="syncTimerText"></span>
-          </span>
+          <div class="sync-card-tools">
+            <span class="sync-timer" id="syncTimer" title="Time left before this code expires" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span id="syncTimerText"></span>
+            </span>
+            <button type="button" class="sync-refresh" id="syncRefresh" aria-label="New code" title="New code (the old one stops working)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+            </button>
+          </div>
         </div>
         <div class="sync-tiles" id="syncTiles" role="img" aria-label="Getting a code"></div>
         <p class="sync-card-msg" id="syncCodeMsg" hidden></p>

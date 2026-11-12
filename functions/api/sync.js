@@ -1,8 +1,11 @@
 // Sync codes: move a player's progress to another device, with no account
 // (Cloudflare Pages Function, D1 binding `DB`).
 //
-//   POST /api/sync  { player, name }
-//        -> { code, expires }  a one-time code, valid for 15 minutes
+//   POST /api/sync  { player, name[, renew: true] }
+//        -> { code, expires }  a one-time code, valid for 15 minutes. The player's
+//           current code comes back while it has more than a minute left, so
+//           opening the dialog again or reloading costs nothing; `renew` always
+//           makes a new one (and cancels the old one).
 //   PUT  /api/sync  { code, player, preview: true }
 //        -> { same, device, player, merged }  what entering the code would do,
 //           as { times, days } counts; the code stays valid
@@ -25,7 +28,13 @@ export const TTL = 15 * 60;
 /** No 0/O, 1/I/L, so a code is easy to read out and type. */
 export const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const LEN = 8;
-const RATE = { make: 20, miss: 10 }; // per IP per hour
+/**
+ * Per IP per hour. Only new codes count toward `make` (handing back the current one is free);
+ * it is generous because a household, school or mobile carrier can share one IP.
+ */
+const RATE = { make: 60, miss: 10 };
+/** A code with less time than this left is replaced rather than handed back. */
+const REUSE_MIN = 60;
 
 export function newCode() {
   let out = "";
@@ -54,14 +63,23 @@ export async function tries(db, ip, kind, now) {
 export const logTry = (db, ip, kind, now) =>
   db.prepare("INSERT INTO sync_tries (ip, kind, created_at) VALUES (?1, ?2, ?3)").bind(ip, kind, now);
 
-/** Make a code for a player. Any older code of theirs stops working. */
+/** A player's code: their current one if it has time left, else a new one (any older code stops working). */
 export async function onRequestPost({ request, env }) {
   const b = await readJson(request);
   if (!isPlayer(b?.player)) return json({ error: "bad player" }, 400);
   const db = env.DB;
-  const ip = await ipHash(request);
   const now = nowSec();
-  if ((await tries(db, ip, "make", now)) >= RATE.make) return json({ error: "Too many codes. Try again later." }, 429);
+  if (!b.renew) {
+    const cur = await db.prepare("SELECT code, created_at FROM sync_codes WHERE player = ?1 AND created_at > ?2")
+      .bind(b.player, now - TTL + REUSE_MIN).first();
+    if (cur) {
+      const name = cleanName(b.name);
+      if (name) await db.prepare("UPDATE sync_codes SET name = ?1 WHERE code = ?2").bind(name, cur.code).run();
+      return json({ code: cur.code, expires: cur.created_at + TTL - now });
+    }
+  }
+  const ip = await ipHash(request);
+  if ((await tries(db, ip, "make", now)) >= RATE.make) return json({ error: "Too many new codes from your network. Try again in a few minutes." }, 429);
 
   for (let attempt = 0; ; attempt++) {
     const code = newCode();
