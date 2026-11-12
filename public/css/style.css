@@ -431,6 +431,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .lb-rank { color: var(--muted); text-align: right; }
 .lb-name { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lb-extra { font-size: 0.75rem; color: var(--muted); text-align: right; }
+.lb-extra span { white-space: nowrap; }
 .lb-time { font-weight: 600; }
 .dialog .lb-empty { text-align: center; padding: 32px 0; margin: 0; }
 .lb-me:empty { display: none; }

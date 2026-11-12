@@ -377,8 +377,7 @@ function finish(won) {
   render();
   $("endTitle").textContent = won ? "Solved" : "Three mistakes";
   $("endText").textContent = won
-    ? `${LEVELS[game.puzzle.difficulty]} puzzle in ${fmt(Math.floor(game.elapsed))} with ${game.mistakes} mistake${game.mistakes === 1 ? "" : "s"}.` +
-      (game.hints ? ` ${plural(game.hints, "hint")} add${game.hints === 1 ? "s" : ""} ${minutes(hintPenalty(game.hints))}, so your leaderboard time is ${fmt(Math.floor(game.elapsed) + hintPenalty(game.hints))}.` : "")
+    ? `${LEVELS[game.puzzle.difficulty]} puzzle in ${fmt(Math.floor(game.elapsed))} with ${plural(game.mistakes, "mistake")}.` + penaltyNote(game)
     : "That's the limit. You can start over, or keep going without a mistake limit.";
   $("continueBtn").hidden = won;
   $("endDialog").returnValue = "";
@@ -389,9 +388,26 @@ function finish(won) {
 // ---------- Leaderboard ----------
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-/** Leaderboard seconds for n hints: hint k costs k minutes. Must match functions/api/scores.js. */
-const hintPenalty = (n) => 30 * n * (n + 1);
-const minutes = (s) => plural(s / 60, "minute");
+/** Leaderboard penalties in seconds. Must match functions/api/scores.js. */
+const MISTAKE_PENALTY = 30; // per mistake
+const hintPenalty = (n) => 30 * n * (n + 1); // hint k costs k minutes
+/** Short duration: 30s, 1m, 1m 30s. */
+const dur = (s) => (s < 60 ? `${s}s` : s % 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s / 60}m`);
+/** "1 mistake +30s", "2 hints +3m": one part per kind of penalty. */
+function penaltyParts(mistakes, hints) {
+  const parts = [];
+  if (mistakes) parts.push(`${plural(mistakes, "mistake")} +${dur(mistakes * MISTAKE_PENALTY)}`);
+  if (hints) parts.push(`${plural(hints, "hint")} +${dur(hintPenalty(hints))}`);
+  return parts;
+}
+function penaltyNote(g) {
+  if (g.unlimited) return "";
+  const hints = g.hints || 0;
+  const parts = penaltyParts(g.mistakes, hints);
+  if (!parts.length) return "";
+  const total = g.mistakes * MISTAKE_PENALTY + hintPenalty(hints);
+  return ` Penalties (${parts.join(", ")}) make your leaderboard time ${fmt(Math.floor(g.elapsed) + total)}.`;
+}
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** The solve that just finished, waiting for a name before it is posted. */
@@ -494,7 +510,7 @@ async function loadBoard() {
     <li class="${r.me ? "me" : ""}">
       <span class="lb-rank">${r.rank}</span>
       <span class="lb-name">${escapeHtml(r.name)}</span>
-      <span class="lb-extra">${[r.mistakes ? plural(r.mistakes, "mistake") : "", r.hints ? `${plural(r.hints, "hint")} +${hintPenalty(r.hints) / 60}m` : ""].filter(Boolean).join(" · ")}</span>
+      <span class="lb-extra">${penaltyParts(r.mistakes, r.hints).map((t) => `<span>${t}</span>`).join(" · ")}</span>
       <span class="lb-time">${fmt(r.time)}</span>
     </li>`).join("")}</ol>`;
   const me = data.me;
