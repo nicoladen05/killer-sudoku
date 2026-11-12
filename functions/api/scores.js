@@ -22,6 +22,9 @@
 // one entry per player per puzzle and a per-IP rate limit.
 
 import { DAILY_LEVEL, dailyDate, addDays, isDate } from "../../public/js/daily.js";
+import { json, readJson, isPlayer, ipHash, cleanName } from "../../lib/server.js";
+
+export { cleanName };
 
 const LEVELS = ["easy", "medium", "hard", "expert", "master"];
 /** Fastest believable solve per level, in seconds. */
@@ -38,28 +41,7 @@ const RATE = { perHour: 20, perDay: 100 };
 export const hintPenalty = (n) => 30 * n * (n + 1);
 const PENALTY_SQL = "30 * hints * (hints + 1)";
 
-const json = (body, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-  });
-
 const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
-
-/** Trim, collapse whitespace, drop control/format characters, cap at 20 chars. */
-export function cleanName(raw) {
-  if (typeof raw !== "string") return "";
-  const s = raw.normalize("NFKC").replace(/\s+/g, " ").replace(/[\p{C}]/gu, "").trim();
-  return [...s].slice(0, 20).join("");
-}
-
-async function ipHash(request) {
-  // Hashed with the current day so it can't be linked across days; only used for rate limiting.
-  const ip = request.headers.get("cf-connecting-ip") || "unknown";
-  const day = new Date().toISOString().slice(0, 10);
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`cagey:${day}:${ip}`));
-  return [...new Uint8Array(buf)].slice(0, 12).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
 /**
  * Each player's best entry within one board: fewest mistakes, then fastest
@@ -104,7 +86,7 @@ export async function onRequestGet({ request, env }) {
   const isDaily = daily != null;
   const key = isDaily ? daily : level;
   const raw = url.searchParams.get("player");
-  const player = raw && /^[a-z0-9-]{8,40}$/.test(raw) ? raw : null;
+  const player = isPlayer(raw) ? raw : null;
   const { results } = await env.DB
     .prepare(`${best(isDaily)} ORDER BY ${ORDER} LIMIT ${TOP}`)
     .bind(key)
@@ -117,14 +99,13 @@ export async function onRequestGet({ request, env }) {
 }
 
 export async function onRequestPost({ request, env }) {
-  let b;
-  try { b = await request.json(); } catch { return json({ error: "bad json" }, 400); }
-  if (!b || typeof b !== "object") return json({ error: "bad body" }, 400);
+  const b = await readJson(request);
+  if (!b) return json({ error: "bad body" }, 400);
 
   const level = b.level;
   const name = cleanName(b.name);
   if (!LEVELS.includes(level)) return json({ error: "bad level" }, 400);
-  if (typeof b.player !== "string" || !/^[a-z0-9-]{8,40}$/.test(b.player)) return json({ error: "bad player" }, 400);
+  if (!isPlayer(b.player)) return json({ error: "bad player" }, 400);
   if (typeof b.puzzle !== "string" || !/^[a-f0-9]{16,64}$/.test(b.puzzle)) return json({ error: "bad puzzle" }, 400);
   if (!name) return json({ error: "Please enter a name." }, 400);
   if (!isInt(b.time, MIN_TIME[level], MAX_TIME)) return json({ error: "That time doesn't look right." }, 400);
@@ -167,10 +148,9 @@ export async function onRequestPost({ request, env }) {
 
 /** Change the display name on all of a player's entries. */
 export async function onRequestPut({ request, env }) {
-  let b;
-  try { b = await request.json(); } catch { return json({ error: "bad json" }, 400); }
+  const b = await readJson(request);
   const name = cleanName(b?.name);
-  if (typeof b?.player !== "string" || !/^[a-z0-9-]{8,40}$/.test(b.player)) return json({ error: "bad player" }, 400);
+  if (!isPlayer(b?.player)) return json({ error: "bad player" }, 400);
   if (!name) return json({ error: "Please enter a name." }, 400);
   const res = await env.DB.prepare("UPDATE scores SET name = ?1 WHERE player = ?2").bind(name, b.player).run();
   return json({ ok: true, updated: res.meta.changes });

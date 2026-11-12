@@ -1,4 +1,4 @@
-// Leaderboard client: talks to /api/scores (Pages Function + D1).
+// Client for the small API (Pages Functions + D1): leaderboard, streak and sync codes.
 
 const KEY = { player: "cagey:player", name: "cagey:name", pending: "cagey:pending" };
 const API = "/api/scores";
@@ -16,6 +16,11 @@ export function playerId() {
   return id;
 }
 
+/** Play as another player from now on (after entering a sync code). */
+export function setPlayerId(id) {
+  if (/^[a-z0-9-]{8,40}$/.test(id)) set(KEY.player, id);
+}
+
 export const getName = () => get(KEY.name) || "";
 export const setName = (n) => set(KEY.name, n || null);
 
@@ -26,8 +31,8 @@ export async function puzzleHash(puzzle) {
   return Array.from(new Uint8Array(buf).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function call(method, body, query = "") {
-  const res = await fetch(API + query, {
+async function call(method, body, query = "", path = API) {
+  const res = await fetch(path + query, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
@@ -35,12 +40,15 @@ async function call(method, body, query = "") {
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok) {
-    const err = new Error((data && data.error) || `Leaderboard unavailable (${res.status})`);
+    const err = new Error((data && data.error) || `Server unavailable (${res.status})`);
     err.status = res.status;
     throw err;
   }
   return data;
 }
+
+/** Any API call: JSON in, JSON out. Errors carry `status` when the server answered. */
+export const api = (method, path, body) => call(method, body, "", path);
 
 /** Scores for a level, or for a daily challenge when `daily` is a date. */
 export function fetchScores(level, daily = null) {
@@ -71,3 +79,30 @@ export function renameEverywhere(name) {
   setName(name);
   return call("PUT", { player: playerId(), name });
 }
+
+/** Send days the server doesn't know yet (may be none) and get back every day it knows. */
+export function syncStreak(dates) {
+  return call("POST", { player: playerId(), dates }, "", "/api/streak");
+}
+
+/**
+ * A one-time code (valid 15 minutes) that moves this player to another device.
+ * The current code comes back while it has time left; `renew` always makes a new one.
+ */
+export function makeSyncCode(renew = false) {
+  return call("POST", { player: playerId(), name: getName(), ...(renew ? { renew: true } : {}) }, "", "/api/sync");
+}
+
+/** What entering a code would do, as { same, device, player, merged } counts. The code stays valid. */
+export function previewSyncCode(code) {
+  return call("PUT", { code, player: playerId(), preview: true }, "", "/api/sync");
+}
+
+/** Enter a code from another device: from now on this browser plays as that player. */
+export async function useSyncCode(code) {
+  const r = await call("PUT", { code, player: playerId(), name: getName() }, "", "/api/sync");
+  setPlayerId(r.player);
+  if (r.name) setName(r.name);
+  return r;
+}
+

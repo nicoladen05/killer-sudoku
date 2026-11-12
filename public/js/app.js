@@ -1,6 +1,7 @@
 import { rowOf, colOf, boxOf } from "./engine.js";
 import * as lb from "./leaderboard.js";
-import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, streak } from "./daily.js";
+import { passkeysSupported, savePasskey, signInWithPasskey } from "./passkey.js";
+import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, mergeDays, streak } from "./daily.js";
 
 const MAX_MISTAKES = 3;
 const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
@@ -8,7 +9,9 @@ const STORE = {
   game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level",
   daily: "cagey:daily", // the current or last daily game (any run)
   dailyDone: "cagey:dailyDone", // dates on which a daily was finished, for the streak
+  daysSynced: "cagey:daysSynced", // the dates the server is known to have
   mode: "cagey:mode", // "daily" while the daily is the open game
+  passkey: "cagey:passkey", // set once a passkey was saved or used here
 };
 
 const $ = (id) => document.getElementById(id);
@@ -387,7 +390,7 @@ function finish(won) {
   game.status = won ? "won" : "lost";
   area = null;
   // Any finished daily keeps the streak going, also replays and games past three mistakes.
-  if (won && game.daily) { store.set(STORE.dailyDone, addSolved(store.get(STORE.dailyDone), game.daily)); renderDailyBtn(); }
+  if (won && game.daily) { store.set(STORE.dailyDone, addSolved(store.get(STORE.dailyDone), game.daily)); renderDailyBtn(); syncStreak(); }
   save();
   render();
   showEnd(won, won ? 350 : 0);
@@ -512,9 +515,10 @@ async function openBoard(level) {
 function renderPlayingAs() {
   const name = lb.getName();
   $("lbRenameRow").hidden = true;
-  $("lbPlayingAs").innerHTML = name
+  const sync = ` · <button type="button" class="link-inline" data-open-sync>Other devices</button>`;
+  $("lbPlayingAs").innerHTML = (name
     ? `Playing as <b>${escapeHtml(name)}</b> · <button type="button" class="link-inline" id="lbChange">Change name</button>`
-    : "Solve a puzzle to add your time.";
+    : "Solve a puzzle to add your time.") + sync;
 }
 
 async function loadBoard() {
@@ -685,6 +689,27 @@ function replayDaily() {
   loadGame({ ...newGameState(puzzle), daily, ranked: false });
 }
 
+/**
+ * Keep the streak on the server too: send the days it doesn't have yet, then
+ * keep both lists. Quietly does nothing while offline; the next sync catches up.
+ */
+let streakSync = null;
+function syncStreak() {
+  const run = async () => {
+    const local = store.get(STORE.dailyDone) || [];
+    const known = new Set(store.get(STORE.daysSynced) || []);
+    try {
+      const { dates } = await lb.syncStreak(local.filter((d) => !known.has(d)));
+      store.set(STORE.daysSynced, dates);
+      store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), dates));
+      renderDailyBtn();
+    } catch {}
+  };
+  // One at a time, so two syncs don't send the same days.
+  streakSync = (streakSync || Promise.resolve()).then(run);
+  return streakSync;
+}
+
 function renderDailyBtn() {
   const s = dailyStreak();
   const badge = $("dailyBadge");
@@ -709,6 +734,432 @@ $("newDialog").addEventListener("close", () => {
   if (LEVELS[v]) startNew(v);
   else if (v === "daily") openDaily();
   else if (v === "resume") resumeNormal();
+});
+
+// ---------- Other devices (sync codes and passkeys) ----------
+
+const showCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
+const syncLink = (code) => `${location.origin}${location.pathname}#sync=${code}`;
+/** A typed or pasted code as ABCD-EFGH when it has the right length, else as typed. */
+const tidyCode = (raw) => {
+  const c = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return c.length === 8 ? showCode(c) : raw.trim();
+};
+const offline = "Couldn't reach the server. Check your connection and try again.";
+const CHECK_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
+
+// Motion: short, ease-out, transform and opacity (plus a 2px blur to soften swaps).
+// WAAPI rather than keyframes, so a newer animation simply replaces an older one.
+// With reduced motion, things only fade.
+const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+/** Animate `el` in from a small offset, scale or blur. */
+function enter(el, { x = 0, y = 0, scale = 1, blur = 0, delay = 0, duration = 200 } = {}) {
+  if (!el?.animate) return;
+  const still = { opacity: 1, transform: "none", filter: "none" };
+  const from = reduceMotion.matches
+    ? { opacity: 0 }
+    : { opacity: 0, transform: `translate(${x}px, ${y}px) scale(${scale})`, filter: blur ? `blur(${blur}px)` : "none" };
+  el.animate([from, reduceMotion.matches ? { opacity: 1 } : still], { duration, delay, easing: EASE_OUT, fill: "backwards" });
+}
+
+/** A small horizontal shake for a rejected entry. */
+function nudge(el) {
+  if (reduceMotion.matches || !el?.animate) return;
+  el.animate(
+    [{ transform: "none" }, { transform: "translateX(-4px)" }, { transform: "translateX(4px)" }, { transform: "translateX(-2px)" }, { transform: "none" }],
+    { duration: 280, easing: "ease-out" },
+  );
+}
+
+/** Show a spinner in place of a button's icon while its request runs. */
+function busy(btn, on) {
+  if (on && !btn.querySelector(".spin")) btn.insertAdjacentHTML("afterbegin", `<span class="spin" aria-hidden="true"></span>`);
+  btn.disabled = on;
+  btn.classList.toggle("busy", on);
+  btn.setAttribute("aria-busy", on);
+}
+
+/** This player's current code: { code, player, expires (ms) }, kept while the page is open. */
+let myCode = null;
+let codeLoading = false;
+let codeTimer = 0;
+/** The code being confirmed on the merge screen. */
+let pendingCode = null;
+/** The code the tiles show, so only a new code gets the reveal. */
+let shownCode = null;
+
+function statusLine(id, text, kind = "") {
+  const el = $(id);
+  const changed = text && (el.hidden || el.innerHTML !== text);
+  el.hidden = !text;
+  el.className = `sync-status ${kind}`.trim();
+  el.innerHTML = text || "";
+  if (changed) enter(el, { y: -4, blur: 2 });
+}
+const syncStatus = (text, kind) => statusLine("syncStatus", text, kind);
+const mergeStatus = (text, kind) => statusLine("mergeStatus", text, kind);
+
+/** Switch screens. `dir` 1 slides the new one in from the right (forward), -1 from the left (back). */
+function syncView(name, dir = 0) {
+  const next = $(name === "main" ? "syncMain" : "syncMerge");
+  const was = next.hidden;
+  $("syncMain").hidden = name !== "main";
+  $("syncMerge").hidden = name !== "merge";
+  if (was && dir) enter(next, { x: 16 * dir, blur: 2, duration: 220 });
+}
+
+/** `code` comes from a sync link: go straight to the merge screen for it. */
+function openSync(code = "") {
+  syncView("main");
+  syncStatus("");
+  $("syncInput").value = "";
+  renderPasskey();
+  if ($("boardDialog").open) $("boardDialog").close();
+  if (!$("syncDialog").open) $("syncDialog").showModal();
+  loadCode();
+  if (code) {
+    $("syncInput").value = tidyCode(code);
+    reviewCode($("syncInput").value);
+  }
+}
+$("syncDialog").addEventListener("close", () => { clearInterval(codeTimer); codeTimer = 0; });
+
+function renderCode(error = "") {
+  const code = myCode?.code;
+  const chars = code ? [...code] : Array(8).fill("");
+  const tile = (c) => `<span class="sync-tile">${escapeHtml(c)}</span>`;
+  const tiles = $("syncTiles");
+  tiles.innerHTML = `${chars.slice(0, 4).map(tile).join("")}<span class="sync-dash"></span>${chars.slice(4).map(tile).join("")}`;
+  tiles.setAttribute("aria-label", code ? `Your code: ${showCode(code)}` : "Getting a code");
+  tiles.classList.toggle("waiting", !code);
+  tiles.hidden = !!error;
+  $("syncCodeMsg").hidden = !error;
+  $("syncCodeMsg").textContent = error;
+  $("syncCopyRow").hidden = !!error;
+  $("syncRetry").hidden = !error;
+  $("syncCopyCode").disabled = $("syncCopyLink").disabled = !code;
+  $("syncTimer").hidden = !code;
+  $("syncRefresh").hidden = !!error;
+  $("syncRefresh").disabled = !code;
+  // A new code: the characters come in one after another.
+  if (code && code !== shownCode) {
+    tiles.querySelectorAll(".sync-tile, .sync-dash").forEach((t, i) => enter(t, { y: 6, blur: 2, delay: i * 30, duration: 220 }));
+  }
+  shownCode = code || null;
+  if (error) enter($("syncCodeMsg"), { y: -4 });
+}
+
+/** Count down the code's 15 minutes; get a new one when it runs out. */
+function tick() {
+  if (!myCode) return;
+  const left = Math.max(0, Math.round((myCode.expires - Date.now()) / 1000));
+  $("syncTimerText").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  $("syncTimer").classList.toggle("ending", left <= 60);
+  if (!left) { myCode = null; loadCode(); }
+}
+
+/**
+ * Show this player's code, reusing the current one while it has more than a minute left.
+ * `renew` always gets a new one (the server then cancels the old code).
+ */
+async function loadCode(renew = false) {
+  clearInterval(codeTimer);
+  codeTimer = setInterval(tick, 1000);
+  const fresh = !renew && myCode && myCode.player === lb.playerId() && myCode.expires - Date.now() > 60000;
+  if (!fresh) {
+    myCode = null;
+    renderCode();
+    if (codeLoading) return;
+    codeLoading = true;
+    try {
+      await syncStreak(); // so the other device gets every day
+      const { code, expires } = await lb.makeSyncCode(renew);
+      myCode = { code, player: lb.playerId(), expires: Date.now() + expires * 1000 };
+    } catch (e) {
+      clearInterval(codeTimer);
+      renderCode(e.status ? e.message : "Couldn't get a code. Check your connection.");
+      return;
+    } finally {
+      codeLoading = false;
+    }
+  }
+  renderCode();
+  tick();
+}
+$("syncRetry").addEventListener("click", () => loadCode());
+
+// A code works once: after another device used it, get a new one here.
+$("syncRefresh").addEventListener("click", () => {
+  const icon = $("syncRefresh").querySelector("svg");
+  if (!reduceMotion.matches) icon.animate([{ transform: "rotate(0)" }, { transform: "rotate(360deg)" }], { duration: 450, easing: EASE_OUT });
+  syncStatus("");
+  loadCode(true);
+});
+
+/** Swap a button's label for a moment ("Copied"), crossfading the label and icon with a slight blur. */
+function flash(btn, text) {
+  const label = btn.querySelector("span");
+  const set = (copied, words) => {
+    btn.classList.toggle("copied", copied);
+    label.textContent = words;
+    enter(label, { blur: 2, duration: 180 });
+    enter(btn.querySelector(copied ? ".i-done" : ".i-idle"), { scale: 0.9, blur: 2, duration: 180 });
+  };
+  set(text === "Copied", text);
+  clearTimeout(btn.flashTimer);
+  btn.flashTimer = setTimeout(() => set(false, btn.dataset.label), 1600);
+}
+
+$("syncCopyCode").addEventListener("click", async () => {
+  if (!myCode) return;
+  try { await navigator.clipboard.writeText(showCode(myCode.code)); flash($("syncCopyCode"), "Copied"); }
+  catch { flash($("syncCopyCode"), "Couldn't copy"); }
+});
+
+$("syncCopyLink").addEventListener("click", async () => {
+  if (!myCode) return;
+  const url = syncLink(myCode.code);
+  try {
+    if (navigator.share && matchMedia("(hover: none)").matches) { await navigator.share({ url }); return; }
+    await navigator.clipboard.writeText(url);
+    flash($("syncCopyLink"), "Copied");
+  } catch (e) {
+    if (e?.name !== "AbortError") flash($("syncCopyLink"), "Couldn't copy");
+  }
+});
+
+/** Check a code and show what linking would do, before anything changes. */
+async function reviewCode(raw) {
+  const btn = $("syncGo");
+  busy(btn, true);
+  syncStatus("");
+  try {
+    await syncStreak(); // count this device's newest days too
+    const p = await lb.previewSyncCode(raw);
+    if (p.same) {
+      syncStatus("That's this device's own code. Enter it on your other device.", "error");
+      nudge($("syncInput").parentElement);
+      return;
+    }
+    pendingCode = raw;
+    renderMerge(p, tidyCode(raw));
+    mergeStatus("");
+    syncView("merge", 1);
+    // The parts of the sum arrive in reading order.
+    const parts = [".merge-pair", ".merge-down", ".merge-result"].map((sel) => $("syncMerge").querySelector(sel));
+    parts.forEach((el, i) => enter(el, { y: 6, scale: i === 2 ? 0.98 : 1, delay: 60 + i * 50, duration: 240 }));
+    $("mergeGo").focus({ preventScroll: true });
+  } catch (e) {
+    syncStatus(e.status ? escapeHtml(e.message) : offline, "error");
+    if (e.status) nudge($("syncInput").parentElement);
+  } finally {
+    busy(btn, false);
+  }
+}
+
+function renderMerge(p, code) {
+  $("mergeGo").querySelector("span:not(.spin)").textContent = "Merge & link";
+  const stat = (id, n, one, many) => { $(id).textContent = n; $(`${id}L`).textContent = n === 1 ? one : many; };
+  for (const [prefix, c] of [["mDev", p.device], ["mPl", p.player], ["mAll", p.merged]]) {
+    stat(`${prefix}Times`, c.times, "time", "times");
+    stat(`${prefix}Days`, c.days, "day", "days");
+  }
+  $("mergeCode").textContent = code;
+}
+
+$("syncForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const code = $("syncInput").value.trim();
+  if (code) reviewCode(code);
+});
+$("syncInput").addEventListener("blur", () => { $("syncInput").value = tidyCode($("syncInput").value); });
+
+function backToMain() {
+  pendingCode = null;
+  syncView("main", -1);
+  $("syncInput").focus();
+}
+$("mergeBack").addEventListener("click", backToMain);
+$("mergeCancel").addEventListener("click", backToMain);
+
+$("mergeGo").addEventListener("click", async () => {
+  if (!pendingCode) return;
+  const btn = $("mergeGo");
+  busy(btn, true);
+  $("mergeBack").disabled = $("mergeCancel").disabled = true;
+  mergeStatus("");
+  let party = null;
+  try {
+    const r = await lb.useSyncCode(pendingCode);
+    party = celebrateMerge(); // only once the server has really merged
+    const msg = await adoptPlayer(r);
+    await party.done;
+    pendingCode = null;
+    $("syncInput").value = "";
+    syncView("main", -1);
+    party.reset();
+    syncStatus(msg, "ok");
+  } catch (e) {
+    party?.reset();
+    mergeStatus(e.status ? escapeHtml(e.message) : offline, "error");
+  } finally {
+    busy(btn, false);
+    btn.classList.remove("done");
+    $("mergeBack").disabled = $("mergeCancel").disabled = false;
+  }
+});
+
+/**
+ * The merge, shown: the two cards fly into the total, which pops with a ring
+ * and a burst of sparks while its numbers bounce; the button turns "Linked".
+ * A rare moment, so it may take a little over a second. Reduced motion: none of it.
+ * Each step starts when the previous animation finishes (not on timers), so it stays in step under load.
+ * Returns { done, reset }: `done` resolves when it's over, `reset` puts the screen back.
+ */
+function celebrateMerge() {
+  const root = $("syncMerge");
+  const anims = [];
+  const extras = [];
+  const reset = () => { anims.forEach((a) => a.cancel()); extras.forEach((e) => e.remove()); };
+  if (reduceMotion.matches || !root.animate) return { done: Promise.resolve(), reset };
+
+  const run = (el, frames, opts) => { const a = el.animate(frames, { fill: "forwards", ...opts }); anims.push(a); return a; };
+  const btn = $("mergeGo");
+  btn.classList.remove("busy"); // the server has answered; the button waits for the show
+  btn.classList.add("done");
+  const result = root.querySelector(".merge-result");
+  const icon = root.querySelector(".merge-result-icon");
+  const target = result.getBoundingClientRect();
+  const tx = target.left + target.width / 2;
+  const ty = target.top + target.height / 2;
+  const FLIGHT = 380;
+
+  // 1. The "+" and the arrow step aside; both cards fly into the total and are absorbed.
+  for (const sel of [".merge-plus", ".merge-down"]) {
+    run(root.querySelector(sel), [{ opacity: 1 }, { opacity: 0, transform: "scale(0.6)" }], { duration: 150, easing: EASE_OUT });
+  }
+  const flights = [...root.querySelectorAll(".merge-card")].map((card, i) => {
+    const r = card.getBoundingClientRect();
+    const dx = tx - (r.left + r.width / 2);
+    const dy = ty - (r.top + r.height / 2);
+    return run(card, [
+      { transform: "none", opacity: 1 },
+      { transform: `translate(${dx * 0.3}px, ${dy * 0.15 - 6}px) scale(0.92)`, opacity: 1, offset: 0.35 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.35)`, opacity: 0 },
+    ], { duration: FLIGHT - 40 * i, delay: 40 * i, easing: "cubic-bezier(0.77, 0, 0.175, 1)" });
+  });
+
+  // 2. Impact: the total pops (slight overshoot), a ring pulses out, sparks burst, numbers count up.
+  const impact = () => {
+    run(result, [{ transform: "scale(1)" }, { transform: "scale(1.045)", offset: 0.35 }, { transform: "scale(1)" }],
+      { duration: 480, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
+    run(icon, [{ transform: "none" }, { transform: "scale(1.18) rotate(-10deg)", offset: 0.4 }, { transform: "none" }],
+      { duration: 500, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
+
+    const ring = document.createElement("span");
+    ring.className = "merge-ring";
+    result.append(ring);
+    extras.push(ring);
+    const pulse = run(ring, [{ transform: "scale(1)", opacity: 0.7 }, { transform: "scale(1.08, 1.25)", opacity: 0 }], { duration: 560, easing: EASE_OUT });
+
+    const colors = ["var(--accent)", "var(--warm)", "var(--ok)"];
+    for (let i = 0; i < 12; i++) {
+      const spark = document.createElement("span");
+      spark.className = "merge-spark";
+      spark.style.background = colors[i % 3];
+      icon.append(spark);
+      extras.push(spark);
+      const angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const dist = 30 + Math.random() * 22;
+      run(spark, [
+        { transform: "translate(-50%, -50%) scale(1)", opacity: 1 },
+        { transform: `translate(calc(-50% + ${Math.cos(angle) * dist}px), calc(-50% + ${Math.sin(angle) * dist}px)) scale(0)`, opacity: 0.9 },
+      ], { duration: 520 + Math.random() * 160, easing: EASE_OUT });
+    }
+
+    // The total already shows the merged numbers; they bounce as the cards land in them.
+    [$("mAllTimes"), $("mAllDays")].forEach((n, i) => {
+      run(n, [{ transform: "none" }, { transform: "translateY(-3px) scale(1.18)", offset: 0.4 }, { transform: "none" }],
+        { duration: 420, delay: 60 * i, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
+    });
+
+    btn.querySelector("span:not(.spin)").textContent = "Linked";
+    enter(btn.querySelector("span:not(.spin)"), { blur: 2, duration: 180 });
+    navigator.vibrate?.(12);
+    // 3. A short beat on the finished total before leaving the screen.
+    return pulse.finished.then(() => run(result, [{ opacity: 1 }, { opacity: 1 }], { duration: 260 }).finished);
+  };
+
+  const done = Promise.all(flights.map((a) => a.finished)).then(impact).catch(() => {}); // cancelled: just end
+  return { done, reset };
+}
+
+/** After a sync code or passkey: take over the player's days, push this device's own, and say who we are now. */
+async function adoptPlayer(r) {
+  store.set(STORE.daysSynced, r.dates);
+  store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), r.dates));
+  store.set(STORE.passkey, r.passkeys ? 1 : 0);
+  myCode = null; // it was for the player this device used to be
+  await syncStreak();
+  renderDailyBtn();
+  renderPasskey();
+  loadCode();
+  lb.retryPending();
+  const s = dailyStreak();
+  const who = r.name ? ` You're playing as <b>${escapeHtml(r.name)}</b>` : " This device is linked";
+  return `Done.${who}${s.current ? ` with a ${s.current}-day streak` : ""}.`;
+}
+
+/** A failed passkey prompt: say nothing when the player just closed it. */
+function passkeyError(e, fallback) {
+  if (e?.name === "NotAllowedError" || e?.name === "AbortError") return syncStatus("");
+  if (e?.name === "InvalidStateError") return syncStatus("This password manager already has a passkey for you.");
+  syncStatus(e?.status ? escapeHtml(e.message) : fallback, "error");
+}
+
+function renderPasskey() {
+  const saved = !!store.get(STORE.passkey);
+  const changed = saved !== $("passkeyBox").classList.contains("saved") && $("pkState").textContent !== "";
+  $("passkeyBox").hidden = !passkeysSupported();
+  $("passkeyBox").classList.toggle("saved", saved);
+  $("pkState").innerHTML = saved ? `${CHECK_SVG}Saved` : "Not saved yet";
+  const label = saved ? "Save another passkey" : "Save a passkey";
+  $("pkSave").setAttribute("aria-label", label);
+  $("pkSave").title = label;
+  if (changed) enter($("pkState"), { y: 4, blur: 2 });
+}
+
+$("pkSave").addEventListener("click", async () => {
+  busy($("pkSave"), true);
+  syncStatus("");
+  try {
+    await savePasskey();
+    store.set(STORE.passkey, 1);
+    renderPasskey();
+    syncStatus("Passkey saved. On another device, tap Sign in.", "ok");
+  } catch (e) {
+    passkeyError(e, "Couldn't save the passkey. Check your connection and try again.");
+  } finally {
+    busy($("pkSave"), false);
+  }
+});
+
+$("pkSignIn").addEventListener("click", async () => {
+  busy($("pkSignIn"), true);
+  syncStatus("");
+  try {
+    syncStatus(await adoptPlayer(await signInWithPasskey()), "ok");
+  } catch (e) {
+    passkeyError(e, "Couldn't sign in. Check your connection and try again.");
+  } finally {
+    busy($("pkSignIn"), false);
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-open-sync]")) openSync();
 });
 
 // ---------- Selection and area dragging ----------
@@ -871,6 +1322,18 @@ new ResizeObserver(() => drawCages()).observe(board);
 buildBoard();
 lb.retryPending();
 renderDailyBtn();
+syncStreak();
+
+// A sync link (#sync=CODE) from another device: show what linking would do; nothing changes until "Merge & link".
+// Also when the link is opened in a tab that already has the game (only the hash changes then).
+function openSyncLink() {
+  const m = location.hash.match(/^#sync=([A-Za-z0-9-]{8,12})$/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  openSync(m[1].toUpperCase().replace(/-/g, ""));
+}
+openSyncLink();
+addEventListener("hashchange", openSyncLink);
 
 /** The daily to reopen on load: today's, or yesterday's if it is still being played. */
 function savedDaily() {
