@@ -1,6 +1,6 @@
 # Killer Sudoku
 
-A calm, minimalist Killer Sudoku for desktop and touch screens. No ads, no accounts, no tracking. Plain HTML, CSS and JavaScript with no build step, plus one small Pages Function for the leaderboard.
+A calm, minimalist Killer Sudoku for desktop and touch screens. No ads, no accounts, no tracking. Plain HTML, CSS and JavaScript with no build step, plus a few small Pages Functions for the leaderboard, streaks and moving progress between devices.
 
 ## Features
 
@@ -29,6 +29,7 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 - **Daily challenge** (calendar button, top right): one Hard puzzle a day, the same for everyone, with its own leaderboard. A new puzzle starts at midnight German time (Europe/Berlin). You can replay it as often as you like, but only your first finished run is ranked, because a replay is mostly memory. The badge on the button shows your streak, the number of days in a row you finished the daily (any finished run counts, also replays and games past three mistakes). It turns blue while today's puzzle is still open. After solving you can share a spoiler-free result. The daily has its own saved game, so it doesn't replace a puzzle you're in the middle of ("Back to your … game" in the New game dialog).
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
+- **Other devices, no account:** your streak is also kept on the server, so clearing site data doesn't lose it. To play on a second device, open the leaderboard, tap "Other devices" and get a code (like `EH6A-ER2R`). Enter it on the other device or open the link it gives you. That device then plays as you, with your name, times and streak, and anything it already had is added to yours. Codes work once and expire after 15 minutes. Games in progress stay on the device they were started on.
 
 ### Keyboard
 
@@ -78,11 +79,15 @@ npm run deploy
 
 ### Leaderboard backend
 
-`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is in `migrations/` (`0001_scores.sql`, then `0002_daily.sql`). Apply a new migration to both databases, e.g. `npx wrangler d1 execute cagey-leaderboard --remote --file migrations/0002_daily.sql` (and the same for `cagey-leaderboard-preview`).
+`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is in `migrations/` (`0001_scores.sql`, `0002_daily.sql`, then `0003_sync.sql`). Apply a new migration to both databases, e.g. `npx wrangler d1 execute cagey-leaderboard --remote --file migrations/0003_sync.sql` (and the same for `cagey-leaderboard-preview`).
 
 - `GET /api/scores?level=hard&player=<id>`: top 50 (best time per player and mistake count, fewer mistakes first) and your own rank.
 - `GET /api/scores?daily=2026-11-12&player=<id>`: the same for one day's daily challenge.
 - `POST /api/scores`: post a solve (with `daily: "<date>"` for a daily). `PUT /api/scores`: rename a player.
+- `POST /api/streak` (`functions/api/streak.js`): send the daily days the server doesn't have yet, get back all of them (days with a daily leaderboard entry count too). Accepts real dates from the last 400 days, at most 1000 new days per IP per day.
+- `POST /api/sync` (`functions/api/sync.js`): make a one-time code for a player (valid 15 minutes; a new code replaces the old one). `PUT /api/sync`: use a code. The device's own times and days move to the code's player (on the same puzzle, the code player's entry wins), and it gets that player's id and name back. At most 20 codes and 10 wrong codes per IP per hour.
+
+A player is just the random id in their browser. It's never shown, and only a short-lived code can hand it to another device.
 
 How the daily works: the puzzle is generated in the browser from a seed made from the date (`js/daily.js`), so no server generation is needed. Daily entries are only accepted for today and yesterday (German time), and only at level Hard. The first puzzle hash posted for a day is stored in the `daily` table; later entries must match it, so everyone on a daily board played the same puzzle. Changing the generator in `engine.js` changes the daily puzzles too, so avoid deploying a generator change during the day (or bump `DAILY_VERSION`, which changes every day's puzzle). Daily entries don't appear on the Hard board.
 
@@ -95,13 +100,16 @@ public/
   index.html        markup
   css/style.css     styles and light/dark themes
   js/app.js         UI, input, persistence
-  js/leaderboard.js leaderboard API client
+  js/leaderboard.js API client: leaderboard, streak, sync codes
   js/daily.js       daily challenge: date, seed and streak (no DOM, also used by the API and tests)
   js/engine.js      brute-force solver and puzzle generator (no DOM, also used by tests)
   js/logic.js       human-style logic solver used to accept and grade puzzles
   js/worker.js      runs the generator off the main thread
   _headers          Cloudflare Pages response headers
 functions/api/scores.js  leaderboard API (Pages Function + D1)
+functions/api/streak.js  daily streak kept on the server
+functions/api/sync.js    sync codes for other devices
+lib/server.js       helpers shared by the API functions
 migrations/        D1 schema
-test/               node:test suite for the engine, leaderboard and daily
+test/               node:test suite for the engine, leaderboard, daily and sync (the API runs against node:sqlite via test/d1.mjs)
 ```

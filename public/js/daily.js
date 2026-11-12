@@ -45,12 +45,14 @@ export function dailyLabel(date) {
   return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
 
-/** Add a solved day to a sorted list of dates (kept to the last 400 days). */
-export function addSolved(dates, date) {
-  const set = new Set(Array.isArray(dates) ? dates.filter(isDate) : []);
-  set.add(date);
+/** Both lists of solved days as one sorted list, without repeats (kept to the last 400 days). */
+export function mergeDays(a, b) {
+  const set = new Set([...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].filter(isDate));
   return [...set].sort().slice(-400);
 }
+
+/** Add a solved day to a sorted list of dates (kept to the last 400 days). */
+export const addSolved = (dates, date) => mergeDays(dates, [date]);
 
 /**
  * Streak from the days a daily was finished.

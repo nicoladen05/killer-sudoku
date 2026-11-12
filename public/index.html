@@ -163,6 +163,32 @@
     </form>
   </dialog>
 
+  <dialog class="dialog" id="syncDialog" aria-labelledby="syncTitle">
+    <div class="lb-head">
+      <h2 id="syncTitle">Other devices</h2>
+      <form method="dialog"><button class="icon-btn" aria-label="Close" value="close">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button></form>
+    </div>
+    <p>Your name, leaderboard times and streak are kept with this browser. To play on another device too, get a code here and enter it there. No account needed.</p>
+    <div class="sync-give">
+      <button type="button" class="primary" id="syncMake">Get a code</button>
+      <div class="sync-code-box" id="syncCodeBox" hidden>
+        <output class="sync-code" id="syncCode"></output>
+        <p class="sync-note">Enter it on your other device within 15 minutes. It works once. Or open this link there: <button type="button" class="link-inline" id="syncCopy">Copy link</button></p>
+      </div>
+    </div>
+    <form class="lb-submit sync-take" id="syncForm">
+      <label for="syncInput">Got a code from another device?</label>
+      <div class="lb-row">
+        <input id="syncInput" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" required>
+        <button type="submit">Link</button>
+      </div>
+      <small class="sync-note">This device then plays as that player. Its own times and streak days are added to theirs.</small>
+    </form>
+    <p class="lb-status" id="syncStatus" hidden></p>
+  </dialog>
+
   <div class="loading" id="loading" hidden><span></span>Building puzzle…</div>
 
   <script type="module" src="js/app.js"></script>

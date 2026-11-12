@@ -1,6 +1,6 @@
 import { rowOf, colOf, boxOf } from "./engine.js";
 import * as lb from "./leaderboard.js";
-import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, streak } from "./daily.js";
+import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, mergeDays, streak } from "./daily.js";
 
 const MAX_MISTAKES = 3;
 const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
@@ -8,6 +8,7 @@ const STORE = {
   game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level",
   daily: "cagey:daily", // the current or last daily game (any run)
   dailyDone: "cagey:dailyDone", // dates on which a daily was finished, for the streak
+  daysSynced: "cagey:daysSynced", // the dates the server is known to have
   mode: "cagey:mode", // "daily" while the daily is the open game
 };
 
@@ -387,7 +388,7 @@ function finish(won) {
   game.status = won ? "won" : "lost";
   area = null;
   // Any finished daily keeps the streak going, also replays and games past three mistakes.
-  if (won && game.daily) { store.set(STORE.dailyDone, addSolved(store.get(STORE.dailyDone), game.daily)); renderDailyBtn(); }
+  if (won && game.daily) { store.set(STORE.dailyDone, addSolved(store.get(STORE.dailyDone), game.daily)); renderDailyBtn(); syncStreak(); }
   save();
   render();
   showEnd(won, won ? 350 : 0);
@@ -512,9 +513,10 @@ async function openBoard(level) {
 function renderPlayingAs() {
   const name = lb.getName();
   $("lbRenameRow").hidden = true;
-  $("lbPlayingAs").innerHTML = name
+  const sync = ` · <button type="button" class="link-inline" data-open-sync>Other devices</button>`;
+  $("lbPlayingAs").innerHTML = (name
     ? `Playing as <b>${escapeHtml(name)}</b> · <button type="button" class="link-inline" id="lbChange">Change name</button>`
-    : "Solve a puzzle to add your time.";
+    : "Solve a puzzle to add your time.") + sync;
 }
 
 async function loadBoard() {
@@ -685,6 +687,27 @@ function replayDaily() {
   loadGame({ ...newGameState(puzzle), daily, ranked: false });
 }
 
+/**
+ * Keep the streak on the server too: send the days it doesn't have yet, then
+ * keep both lists. Quietly does nothing while offline; the next sync catches up.
+ */
+let streakSync = null;
+function syncStreak() {
+  const run = async () => {
+    const local = store.get(STORE.dailyDone) || [];
+    const known = new Set(store.get(STORE.daysSynced) || []);
+    try {
+      const { dates } = await lb.syncStreak(local.filter((d) => !known.has(d)));
+      store.set(STORE.daysSynced, dates);
+      store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), dates));
+      renderDailyBtn();
+    } catch {}
+  };
+  // One at a time, so two syncs don't send the same days.
+  streakSync = (streakSync || Promise.resolve()).then(run);
+  return streakSync;
+}
+
 function renderDailyBtn() {
   const s = dailyStreak();
   const badge = $("dailyBadge");
@@ -709,6 +732,88 @@ $("newDialog").addEventListener("close", () => {
   if (LEVELS[v]) startNew(v);
   else if (v === "daily") openDaily();
   else if (v === "resume") resumeNormal();
+});
+
+// ---------- Other devices (sync codes) ----------
+
+function syncStatus(text, isError = false) {
+  const el = $("syncStatus");
+  el.hidden = !text;
+  el.classList.toggle("error", isError);
+  el.innerHTML = text || "";
+}
+
+/** `code` fills in the code field, e.g. from a sync link. */
+function openSync(code = "") {
+  $("syncCodeBox").hidden = true;
+  $("syncMake").hidden = false;
+  $("syncMake").disabled = false;
+  $("syncInput").value = code.length === 8 ? showCode(code) : code;
+  syncStatus(code ? "Press Link to bring your progress from the other device to this one." : "");
+  if ($("boardDialog").open) $("boardDialog").close();
+  if (!$("syncDialog").open) $("syncDialog").showModal();
+  if (code) $("syncInput").focus();
+}
+
+const syncLink = (code) => `${location.origin}${location.pathname}#sync=${code}`;
+const showCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
+
+$("syncMake").addEventListener("click", async () => {
+  $("syncMake").disabled = true;
+  syncStatus("");
+  try {
+    await syncStreak(); // so the other device gets every day
+    const { code } = await lb.makeSyncCode();
+    $("syncCode").textContent = showCode(code);
+    $("syncCopy").dataset.code = code;
+    $("syncCopy").textContent = "Copy link";
+    $("syncCodeBox").hidden = false;
+    $("syncMake").hidden = true;
+  } catch (e) {
+    $("syncMake").disabled = false;
+    syncStatus(e.status ? escapeHtml(e.message) : "Couldn't reach the server. Check your connection and try again.", true);
+  }
+});
+
+$("syncCopy").addEventListener("click", async () => {
+  const url = syncLink($("syncCopy").dataset.code);
+  try {
+    if (navigator.share && matchMedia("(hover: none)").matches) { await navigator.share({ url }); return; }
+    await navigator.clipboard.writeText(url);
+    $("syncCopy").textContent = "Copied";
+  } catch (e) {
+    if (e?.name !== "AbortError") $("syncCopy").textContent = "Couldn't copy";
+  }
+});
+
+$("syncForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = $("syncInput").value.trim();
+  if (!code) return;
+  const btn = $("syncForm").querySelector("button");
+  btn.disabled = true;
+  syncStatus("Linking…");
+  try {
+    const r = await lb.useSyncCode(code);
+    // This device's own days still have to reach the new player.
+    store.set(STORE.daysSynced, r.dates);
+    store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), r.dates));
+    await syncStreak();
+    const s = dailyStreak();
+    $("syncInput").value = "";
+    const who = r.name ? ` You're playing as <b>${escapeHtml(r.name)}</b>` : " Linked";
+    syncStatus(`Done.${who}${s.current ? ` with a ${s.current}-day streak` : ""}.`);
+    renderDailyBtn();
+    lb.retryPending();
+  } catch (err) {
+    syncStatus(err.status ? escapeHtml(err.message) : "Couldn't reach the server. Check your connection and try again.", true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-open-sync]")) openSync();
 });
 
 // ---------- Selection and area dragging ----------
@@ -871,6 +976,16 @@ new ResizeObserver(() => drawCages()).observe(board);
 buildBoard();
 lb.retryPending();
 renderDailyBtn();
+syncStreak();
+
+// A sync link (#sync=CODE) from another device: offer to link, but only on a click.
+{
+  const m = location.hash.match(/^#sync=([A-Za-z0-9-]{8,12})$/);
+  if (m) {
+    history.replaceState(null, "", location.pathname + location.search);
+    openSync(m[1].toUpperCase().replace(/-/g, ""));
+  }
+}
 
 /** The daily to reopen on load: today's, or yesterday's if it is still being played. */
 function savedDaily() {

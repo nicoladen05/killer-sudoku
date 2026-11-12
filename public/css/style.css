@@ -468,6 +468,27 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .lb-foot { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 .lb-foot b { color: var(--text); }
 
+/* ---------- Other devices (sync codes) ---------- */
+#syncDialog .lb-head { margin-bottom: 8px; }
+.sync-give { display: grid; gap: 12px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.sync-give > button {
+  padding: 12px; border-radius: 10px; font-weight: 550;
+  border: 1px solid var(--accent); background: var(--accent); color: var(--surface);
+}
+.sync-give > button:disabled { opacity: 0.6; }
+.sync-code-box { display: grid; gap: 8px; }
+.sync-code-box[hidden] { display: none; }
+.sync-code {
+  display: block; text-align: center; padding: 12px; border-radius: 10px; background: var(--bg);
+  font: 650 1.6rem/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 0.12em;
+  user-select: all;
+}
+.dialog p.sync-note, .sync-note { margin: 0; font-size: 0.8rem; color: var(--muted); line-height: 1.45; }
+#syncInput { text-transform: uppercase; letter-spacing: 0.08em; }
+#syncInput::placeholder { letter-spacing: 0.08em; }
+.sync-take { margin-bottom: 12px; }
+#syncDialog p.lb-status { margin: 0; }
+
 .loading {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
