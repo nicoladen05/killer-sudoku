@@ -470,24 +470,22 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 /* ---------- Other devices (sync codes and passkeys) ---------- */
 :root {
-  --raised: #f3f2ee; --well: #ffffff; --btn: #ffffff; --btn-hover: #f0f1f4; --btn-line: #d9d8d3;
+  --raised: #f3f2ee; --well: #ffffff; --btn: #ffffff; --btn-hover: #f0f1f4;
   --ok: #217a45; --ok-soft: #dff1e5; --warm: #b2580f; --on-accent: #ffffff; --merge-soft: #eef2fd;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-  --raised: #222328; --well: #141518; --btn: #2b2c32; --btn-hover: #33343b; --btn-line: #383940;
+  --raised: #222328; --well: #141518; --btn: #2b2c32; --btn-hover: #33343b;
   --ok: #7fd6a0; --ok-soft: #24332b; --warm: #f0a35e; --on-accent: #10131a; --merge-soft: #232a3d;
   }
 }
 :root[data-theme="dark"] {
-  --raised: #222328; --well: #141518; --btn: #2b2c32; --btn-hover: #33343b; --btn-line: #383940;
+  --raised: #222328; --well: #141518; --btn: #2b2c32; --btn-hover: #33343b;
   --ok: #7fd6a0; --ok-soft: #24332b; --warm: #f0a35e; --on-accent: #10131a; --merge-soft: #232a3d;
 }
 
-.sync-dialog {
-  width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
-  border-radius: 20px; border: 1px solid var(--line);
-}
+/* Radius, border and shadow come from .dialog, like the leaderboard. Inner controls use its 10px corners and --line borders. */
+.sync-dialog { width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
 .sync-dialog svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .sync-view { display: flex; flex-direction: column; gap: 20px; }
 .sync-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -498,7 +496,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 .sync-icon {
   width: 44px; height: 44px; flex: none; display: grid; place-items: center; padding: 0;
-  border-radius: 12px; border: 1px solid var(--btn-line); background: transparent; color: var(--muted);
+  border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--muted);
 }
 .sync-icon:hover { background: var(--btn-hover); color: var(--text); }
 .sync-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -506,7 +504,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 .sync-btn {
   height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 0 14px;
-  border-radius: 12px; border: 1px solid var(--btn-line); background: var(--btn); color: var(--text);
+  border-radius: 10px; border: 1px solid var(--line); background: var(--btn); color: var(--text);
   font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap;
 }
 .sync-btn:hover { background: var(--btn-hover); }
@@ -521,14 +519,14 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .sync-btn.copied .i-idle { display: none; }
 .sync-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 
-.sync-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 16px; background: var(--raised); }
+.sync-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; background: var(--raised); }
 .sync-card-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--muted); }
 .sync-timer { display: flex; align-items: center; gap: 5px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .sync-timer svg { width: 13px; height: 13px; }
 .sync-tiles { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .sync-tile {
   width: 32px; height: 44px; display: grid; place-items: center;
-  border-radius: 10px; border: 1px solid var(--btn-line); background: var(--well);
+  border-radius: 8px; border: 1px solid var(--line); background: var(--well);
   font: 600 22px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .sync-tiles.waiting .sync-tile { animation: sync-wait 1.2s ease-in-out infinite alternate; }
@@ -542,7 +540,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .sync-have-row { display: flex; gap: 8px; }
 .sync-field {
   flex: 1; min-width: 0; height: 48px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
-  border-radius: 12px; border: 1px solid var(--btn-line); background: var(--well); color: var(--muted);
+  border-radius: 10px; border: 1px solid var(--line); background: var(--well); color: var(--muted);
 }
 .sync-field:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .sync-field svg { width: 18px; height: 18px; }
@@ -559,7 +557,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .dialog p.sync-status.error { color: var(--error); }
 
 .sync-passkey { display: flex; align-items: center; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
-.sync-pk-icon { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 12px; background: var(--raised); color: var(--muted); }
+.sync-pk-icon { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--raised); color: var(--muted); }
 .sync-passkey.saved .sync-pk-icon { background: var(--ok-soft); color: var(--ok); }
 .sync-pk-icon svg { width: 20px; height: 20px; }
 .sync-pk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -574,7 +572,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .merge-pair { display: flex; align-items: center; gap: 8px; }
 .merge-card {
   flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; padding: 14px;
-  border-radius: 14px; border: 1px solid var(--line); background: var(--raised);
+  border-radius: 12px; border: 1px solid var(--line); background: var(--raised);
 }
 .merge-who { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: var(--text); opacity: 0.85; }
 .merge-who svg { width: 14px; height: 14px; color: var(--muted); }
@@ -592,9 +590,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .merge-down svg { width: 20px; height: 20px; }
 .merge-result {
   display: flex; align-items: center; gap: 14px; padding: 14px 16px;
-  border-radius: 14px; border: 1px solid var(--accent); background: var(--merge-soft);
+  border-radius: 12px; border: 1px solid var(--accent); background: var(--merge-soft);
 }
-.merge-result-icon { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 12px; background: var(--accent); color: var(--on-accent); }
+.merge-result-icon { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: var(--on-accent); }
 .merge-result-icon svg { width: 20px; height: 20px; stroke-width: 2.2; }
 .merge-result-text { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .merge-row { display: flex; flex-wrap: wrap; gap: 4px 20px; }
