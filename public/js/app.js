@@ -748,25 +748,66 @@ const tidyCode = (raw) => {
 const offline = "Couldn't reach the server. Check your connection and try again.";
 const CHECK_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
 
+// Motion: short, ease-out, transform and opacity (plus a 2px blur to soften swaps).
+// WAAPI rather than keyframes, so a newer animation simply replaces an older one.
+// With reduced motion, things only fade.
+const EASE_OUT = "cubic-bezier(0.23, 1, 0.32, 1)";
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+
+/** Animate `el` in from a small offset, scale or blur. */
+function enter(el, { x = 0, y = 0, scale = 1, blur = 0, delay = 0, duration = 200 } = {}) {
+  if (!el?.animate) return;
+  const still = { opacity: 1, transform: "none", filter: "none" };
+  const from = reduceMotion.matches
+    ? { opacity: 0 }
+    : { opacity: 0, transform: `translate(${x}px, ${y}px) scale(${scale})`, filter: blur ? `blur(${blur}px)` : "none" };
+  el.animate([from, reduceMotion.matches ? { opacity: 1 } : still], { duration, delay, easing: EASE_OUT, fill: "backwards" });
+}
+
+/** A small horizontal shake for a rejected entry. */
+function nudge(el) {
+  if (reduceMotion.matches || !el?.animate) return;
+  el.animate(
+    [{ transform: "none" }, { transform: "translateX(-4px)" }, { transform: "translateX(4px)" }, { transform: "translateX(-2px)" }, { transform: "none" }],
+    { duration: 280, easing: "ease-out" },
+  );
+}
+
+/** Show a spinner in place of a button's icon while its request runs. */
+function busy(btn, on) {
+  if (on && !btn.querySelector(".spin")) btn.insertAdjacentHTML("afterbegin", `<span class="spin" aria-hidden="true"></span>`);
+  btn.disabled = on;
+  btn.classList.toggle("busy", on);
+  btn.setAttribute("aria-busy", on);
+}
+
 /** This player's current code: { code, player, expires (ms) }, kept while the page is open. */
 let myCode = null;
 let codeLoading = false;
 let codeTimer = 0;
 /** The code being confirmed on the merge screen. */
 let pendingCode = null;
+/** The code the tiles show, so only a new code gets the reveal. */
+let shownCode = null;
 
 function statusLine(id, text, kind = "") {
   const el = $(id);
+  const changed = text && (el.hidden || el.innerHTML !== text);
   el.hidden = !text;
   el.className = `sync-status ${kind}`.trim();
   el.innerHTML = text || "";
+  if (changed) enter(el, { y: -4, blur: 2 });
 }
 const syncStatus = (text, kind) => statusLine("syncStatus", text, kind);
 const mergeStatus = (text, kind) => statusLine("mergeStatus", text, kind);
 
-function syncView(name) {
+/** Switch screens. `dir` 1 slides the new one in from the right (forward), -1 from the left (back). */
+function syncView(name, dir = 0) {
+  const next = $(name === "main" ? "syncMain" : "syncMerge");
+  const was = next.hidden;
   $("syncMain").hidden = name !== "main";
   $("syncMerge").hidden = name !== "merge";
+  if (was && dir) enter(next, { x: 16 * dir, blur: 2, duration: 220 });
 }
 
 /** `code` comes from a sync link: go straight to the merge screen for it. */
@@ -800,6 +841,12 @@ function renderCode(error = "") {
   $("syncRetry").hidden = !error;
   $("syncCopyCode").disabled = $("syncCopyLink").disabled = !code;
   $("syncTimer").hidden = !code;
+  // A new code: the characters come in one after another.
+  if (code && code !== shownCode) {
+    tiles.querySelectorAll(".sync-tile, .sync-dash").forEach((t, i) => enter(t, { y: 6, blur: 2, delay: i * 30, duration: 220 }));
+  }
+  shownCode = code || null;
+  if (error) enter($("syncCodeMsg"), { y: -4 });
 }
 
 /** Count down the code's 15 minutes; get a new one when it runs out. */
@@ -807,6 +854,7 @@ function tick() {
   if (!myCode) return;
   const left = Math.max(0, Math.round((myCode.expires - Date.now()) / 1000));
   $("syncTimerText").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  $("syncTimer").classList.toggle("ending", left <= 60);
   if (!left) { myCode = null; loadCode(); }
 }
 
@@ -837,13 +885,18 @@ async function loadCode() {
 }
 $("syncRetry").addEventListener("click", loadCode);
 
-/** Swap a button's label for a moment ("Copied"). */
+/** Swap a button's label for a moment ("Copied"), crossfading the label and icon with a slight blur. */
 function flash(btn, text) {
   const label = btn.querySelector("span");
-  btn.classList.toggle("copied", text === "Copied");
-  label.textContent = text;
+  const set = (copied, words) => {
+    btn.classList.toggle("copied", copied);
+    label.textContent = words;
+    enter(label, { blur: 2, duration: 180 });
+    enter(btn.querySelector(copied ? ".i-done" : ".i-idle"), { scale: 0.9, blur: 2, duration: 180 });
+  };
+  set(text === "Copied", text);
   clearTimeout(btn.flashTimer);
-  btn.flashTimer = setTimeout(() => { btn.classList.remove("copied"); label.textContent = btn.dataset.label; }, 1600);
+  btn.flashTimer = setTimeout(() => set(false, btn.dataset.label), 1600);
 }
 
 $("syncCopyCode").addEventListener("click", async () => {
@@ -867,21 +920,29 @@ $("syncCopyLink").addEventListener("click", async () => {
 /** Check a code and show what linking would do, before anything changes. */
 async function reviewCode(raw) {
   const btn = $("syncGo");
-  btn.disabled = true;
+  busy(btn, true);
   syncStatus("");
   try {
     await syncStreak(); // count this device's newest days too
     const p = await lb.previewSyncCode(raw);
-    if (p.same) { syncStatus("That's this device's own code. Enter it on your other device.", "error"); return; }
+    if (p.same) {
+      syncStatus("That's this device's own code. Enter it on your other device.", "error");
+      nudge($("syncInput").parentElement);
+      return;
+    }
     pendingCode = raw;
     renderMerge(p, tidyCode(raw));
     mergeStatus("");
-    syncView("merge");
-    $("mergeGo").focus();
+    syncView("merge", 1);
+    // The parts of the sum arrive in reading order.
+    const parts = [".merge-pair", ".merge-down", ".merge-result"].map((sel) => $("syncMerge").querySelector(sel));
+    parts.forEach((el, i) => enter(el, { y: 6, scale: i === 2 ? 0.98 : 1, delay: 60 + i * 50, duration: 240 }));
+    $("mergeGo").focus({ preventScroll: true });
   } catch (e) {
     syncStatus(e.status ? escapeHtml(e.message) : offline, "error");
+    if (e.status) nudge($("syncInput").parentElement);
   } finally {
-    btn.disabled = false;
+    busy(btn, false);
   }
 }
 
@@ -903,7 +964,7 @@ $("syncInput").addEventListener("blur", () => { $("syncInput").value = tidyCode(
 
 function backToMain() {
   pendingCode = null;
-  syncView("main");
+  syncView("main", -1);
   $("syncInput").focus();
 }
 $("mergeBack").addEventListener("click", backToMain);
@@ -912,18 +973,18 @@ $("mergeCancel").addEventListener("click", backToMain);
 $("mergeGo").addEventListener("click", async () => {
   if (!pendingCode) return;
   const btn = $("mergeGo");
-  btn.disabled = true;
-  mergeStatus("Linking…");
+  busy(btn, true);
+  mergeStatus("");
   try {
     const msg = await adoptPlayer(await lb.useSyncCode(pendingCode));
     pendingCode = null;
     $("syncInput").value = "";
-    syncView("main");
+    syncView("main", -1);
     syncStatus(msg, "ok");
   } catch (e) {
     mergeStatus(e.status ? escapeHtml(e.message) : offline, "error");
   } finally {
-    btn.disabled = false;
+    busy(btn, false);
   }
 });
 
@@ -952,16 +1013,18 @@ function passkeyError(e, fallback) {
 
 function renderPasskey() {
   const saved = !!store.get(STORE.passkey);
+  const changed = saved !== $("passkeyBox").classList.contains("saved") && $("pkState").textContent !== "";
   $("passkeyBox").hidden = !passkeysSupported();
   $("passkeyBox").classList.toggle("saved", saved);
   $("pkState").innerHTML = saved ? `${CHECK_SVG}Saved` : "Not saved yet";
   const label = saved ? "Save another passkey" : "Save a passkey";
   $("pkSave").setAttribute("aria-label", label);
   $("pkSave").title = label;
+  if (changed) enter($("pkState"), { y: 4, blur: 2 });
 }
 
 $("pkSave").addEventListener("click", async () => {
-  $("pkSave").disabled = true;
+  busy($("pkSave"), true);
   syncStatus("");
   try {
     await savePasskey();
@@ -971,19 +1034,19 @@ $("pkSave").addEventListener("click", async () => {
   } catch (e) {
     passkeyError(e, "Couldn't save the passkey. Check your connection and try again.");
   } finally {
-    $("pkSave").disabled = false;
+    busy($("pkSave"), false);
   }
 });
 
 $("pkSignIn").addEventListener("click", async () => {
-  $("pkSignIn").disabled = true;
+  busy($("pkSignIn"), true);
   syncStatus("");
   try {
     syncStatus(await adoptPlayer(await signInWithPasskey()), "ok");
   } catch (e) {
     passkeyError(e, "Couldn't sign in. Check your connection and try again.");
   } finally {
-    $("pkSignIn").disabled = false;
+    busy($("pkSignIn"), false);
   }
 });
 

@@ -392,6 +392,22 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   box-shadow: 0 20px 60px rgb(0 0 0 / 0.25);
 }
 .dialog::backdrop { background: rgb(0 0 0 / 0.35); backdrop-filter: blur(2px); }
+/*
+ * Open: fade and grow from 0.96 (modals stay centred), 200ms. Close: faster, 150ms.
+ * display/overlay transitions keep a closing dialog in the top layer until it has faded.
+ * Browsers without @starting-style just open and close instantly.
+ */
+.dialog, .dialog::backdrop {
+  transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out),
+    display 150ms allow-discrete, overlay 150ms allow-discrete;
+}
+.dialog[open], .dialog[open]::backdrop { transition-duration: 200ms; }
+.dialog:not([open]) { opacity: 0; transform: scale(0.97); }
+.dialog:not([open])::backdrop { opacity: 0; }
+@starting-style {
+  .dialog[open] { opacity: 0; transform: scale(0.96); }
+  .dialog[open]::backdrop { opacity: 0; }
+}
 .dialog h2 { margin: 0 0 12px; font-size: 1.2rem; font-weight: 650; }
 .dialog p { margin: 0 0 20px; color: var(--muted); line-height: 1.5; }
 .levels { display: grid; gap: 8px; margin-bottom: 12px; }
@@ -415,7 +431,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 /* ---------- Leaderboard ---------- */
 .dialog-wide { width: min(420px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
-#boardDialog[open] { display: flex; flex-direction: column; gap: 12px; }
+/* Layout stays on while the dialog fades out (it loses [open] at the start of the close). */
+#boardDialog { flex-direction: column; gap: 12px; }
+#boardDialog[open] { display: flex; }
 .dialog input {
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0;
@@ -470,6 +488,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 /* ---------- Other devices (sync codes and passkeys) ---------- */
 :root {
+  /* Motion: strong ease-out for things that enter or answer a press, ease-in-out for things that move. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --raised: #f3f2ee; --well: #ffffff; --btn: #ffffff; --btn-hover: #f0f1f4;
   --ok: #217a45; --ok-soft: #dff1e5; --warm: #b2580f; --on-accent: #ffffff; --merge-soft: #eef2fd;
 }
@@ -498,7 +519,25 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   width: 44px; height: 44px; flex: none; display: grid; place-items: center; padding: 0;
   border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--muted);
 }
-.sync-icon:hover { background: var(--btn-hover); color: var(--text); }
+.sync-icon, .sync-btn {
+  position: relative;
+  transition: transform 160ms var(--ease-out), background-color 150ms ease, color 150ms ease, opacity 150ms ease;
+}
+.sync-icon:active:not(:disabled), .sync-btn:active:not(:disabled) { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .sync-icon:hover { background: var(--btn-hover); color: var(--text); }
+  .sync-btn:hover { background: var(--btn-hover); }
+  .sync-btn.primary:hover { background: var(--accent); filter: brightness(1.06); }
+}
+/* Busy: a spinner takes the icon's place. It fades in after 100ms, so fast answers don't flash it. */
+.sync-dialog .spin {
+  display: none; width: 18px; height: 18px; flex: none; border-radius: 50%;
+  border: 2px solid currentColor; border-right-color: transparent;
+}
+.sync-dialog .busy .spin { display: block; animation: spin 600ms linear infinite, spin-in 150ms var(--ease-out) 100ms both; }
+.sync-dialog .busy > svg { display: none; }
+.sync-dialog .busy:disabled { opacity: 1; }
+@keyframes spin-in { from { opacity: 0; } }
 .sync-dialog button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sync-icon svg { width: 20px; height: 20px; }
 
@@ -507,10 +546,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   border-radius: 10px; border: 1px solid var(--line); background: var(--btn); color: var(--text);
   font: inherit; font-size: 14px; font-weight: 500; white-space: nowrap;
 }
-.sync-btn:hover { background: var(--btn-hover); }
 .sync-btn svg { width: 18px; height: 18px; }
 .sync-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
-.sync-btn.primary:hover { filter: brightness(1.06); }
 .sync-btn.tall { height: 48px; font-size: 15px; }
 .sync-btn:disabled { opacity: 0.55; }
 .sync-btn .i-done { display: none; stroke-width: 2.4; }
@@ -521,7 +558,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 .sync-card { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; background: var(--raised); }
 .sync-card-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--muted); }
-.sync-timer { display: flex; align-items: center; gap: 5px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.sync-timer { display: flex; align-items: center; gap: 5px; font-size: 12px; font-variant-numeric: tabular-nums; transition: color 300ms ease; }
+.sync-timer.ending { color: var(--warm); }
 .sync-timer svg { width: 13px; height: 13px; }
 .sync-tiles { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .sync-tile {
@@ -529,8 +567,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   border-radius: 8px; border: 1px solid var(--line); background: var(--well);
   font: 600 22px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.sync-tiles.waiting .sync-tile { animation: sync-wait 1.2s ease-in-out infinite alternate; }
-.sync-tiles.waiting .sync-tile:nth-child(even) { animation-delay: 0.3s; }
+.sync-tiles.waiting .sync-tile { animation: sync-wait 900ms var(--ease-in-out) infinite alternate; }
+.sync-tiles.waiting .sync-tile:nth-child(even) { animation-delay: 150ms; }
 @keyframes sync-wait { to { opacity: 0.4; } }
 .sync-dash { width: 10px; height: 2px; margin: 0 3px; border-radius: 1px; background: var(--muted); }
 .dialog p.sync-card-msg { margin: 0; font-size: 14px; color: var(--error); text-align: center; }
@@ -557,7 +595,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .dialog p.sync-status.error { color: var(--error); }
 
 .sync-passkey { display: flex; align-items: center; gap: 12px; padding-top: 20px; border-top: 1px solid var(--line); }
-.sync-pk-icon { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--raised); color: var(--muted); }
+.sync-pk-icon { width: 44px; height: 44px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--raised); color: var(--muted); transition: background-color 250ms ease, color 250ms ease; }
 .sync-passkey.saved .sync-pk-icon { background: var(--ok-soft); color: var(--ok); }
 .sync-pk-icon svg { width: 20px; height: 20px; }
 .sync-pk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
@@ -616,4 +654,5 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
+  .sync-dialog .busy .spin { animation: spin 1.2s linear infinite !important; }
 }
