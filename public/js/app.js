@@ -3,7 +3,7 @@ import * as lb from "./leaderboard.js";
 
 const MAX_MISTAKES = 3;
 const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
-const STORE = { game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level" };
+const STORE = { game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level", lbClosed: "cagey:lbClosed" };
 
 const $ = (id) => document.getElementById(id);
 const board = $("board");
@@ -388,25 +388,16 @@ function finish(won) {
 // ---------- Leaderboard ----------
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
-/** Leaderboard penalties in seconds. Must match functions/api/scores.js. */
-const MISTAKE_PENALTY = 30; // per mistake
-const hintPenalty = (n) => 30 * n * (n + 1); // hint k costs k minutes
+/** Leaderboard hint penalty in seconds: hint k costs k minutes. Must match functions/api/scores.js. */
+const hintPenalty = (n) => 30 * n * (n + 1);
 /** Short duration: 30s, 1m, 1m 30s. */
 const dur = (s) => (s < 60 ? `${s}s` : s % 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s / 60}m`);
-/** "1 mistake +30s", "2 hints +3m": one part per kind of penalty. */
-function penaltyParts(mistakes, hints) {
-  const parts = [];
-  if (mistakes) parts.push(`${plural(mistakes, "mistake")} +${dur(mistakes * MISTAKE_PENALTY)}`);
-  if (hints) parts.push(`${plural(hints, "hint")} +${dur(hintPenalty(hints))}`);
-  return parts;
-}
+const hintText = (hints) => (hints ? `${plural(hints, "hint")} +${dur(hintPenalty(hints))}` : "");
+const sectionName = (m) => (m ? plural(m, "mistake") : "No mistakes");
 function penaltyNote(g) {
-  if (g.unlimited) return "";
   const hints = g.hints || 0;
-  const parts = penaltyParts(g.mistakes, hints);
-  if (!parts.length) return "";
-  const total = g.mistakes * MISTAKE_PENALTY + hintPenalty(hints);
-  return ` Penalties (${parts.join(", ")}) make your leaderboard time ${fmt(Math.floor(g.elapsed) + total)}.`;
+  if (g.unlimited || !hints) return "";
+  return ` ${plural(hints, "hint")} add${hints === 1 ? "s" : ""} ${dur(hintPenalty(hints))}, so your leaderboard time is ${fmt(Math.floor(g.elapsed) + hintPenalty(hints))}.`;
 }
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -442,7 +433,7 @@ async function setupSubmit(won) {
 function showPosted(r) {
   const me = r.me;
   const name = escapeHtml(me?.name || lb.getName());
-  const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${LEVELS[solve.level]}.` : "";
+  const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${LEVELS[solve.level]} with ${me.mistakes ? plural(me.mistakes, "mistake") : "no mistakes"}.` : "";
   const note = r.best === false && me ? ` Your best is still ${fmt(me.time)}.` : "";
   lbStatus(`Posted as ${name}.${where}${note} <button type="button" class="link-inline" data-open-board>See leaderboard</button>`);
 }
@@ -500,24 +491,38 @@ async function loadBoard() {
   }
   const list = $("lbList");
   list.innerHTML = `<p class="lb-empty">Loading…</p>`;
-  $("lbMe").innerHTML = "";
   let data;
   try { data = await lb.fetchScores(level); }
   catch (e) { if (level === boardLevel) list.innerHTML = `<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
   if (level !== boardLevel) return;
-  if (!data.entries.length) { list.innerHTML = `<p class="lb-empty">No times yet. Be the first.</p>`; return; }
-  list.innerHTML = `<ol>${data.entries.map((r) => `
-    <li class="${r.me ? "me" : ""}">
-      <span class="lb-rank">${r.rank}</span>
-      <span class="lb-name">${escapeHtml(r.name)}</span>
-      <span class="lb-extra">${penaltyParts(r.mistakes, r.hints).map((t) => `<span>${t}</span>`).join(" · ")}</span>
-      <span class="lb-time">${fmt(r.time)}</span>
-    </li>`).join("")}</ol>`;
-  const me = data.me;
-  if (me && !data.entries.some((r) => r.me)) {
-    $("lbMe").innerHTML = `Your best: <b>${fmt(me.time)}</b>, #${me.rank} of ${me.total}`;
-  }
+  const sections = data.sections || [];
+  if (!sections.some((s) => s.entries.length)) { list.innerHTML = `<p class="lb-empty">No times yet. Be the first.</p>`; return; }
+  const closed = new Set(store.get(STORE.lbClosed) || []);
+  list.innerHTML = sections.map((s) => {
+    const rows = s.entries.map((r) => `
+      <li class="${r.me ? "me" : ""}">
+        <span class="lb-rank">${r.rank}</span>
+        <span class="lb-name">${escapeHtml(r.name)}</span>
+        <span class="lb-extra">${hintText(r.hints)}</span>
+        <span class="lb-time">${fmt(r.time)}</span>
+      </li>`).join("");
+    const me = s.me && !s.entries.some((r) => r.me)
+      ? `<p class="lb-me">Your best: <b>${fmt(s.me.time)}</b>, #${s.me.rank} of ${s.me.total}</p>` : "";
+    return `<details class="lb-section" data-m="${s.mistakes}"${closed.has(s.mistakes) ? "" : " open"}>
+      <summary><span>${sectionName(s.mistakes)}</span><span class="lb-count">${s.total ? plural(s.total, "player") : ""}</span></summary>
+      ${rows ? `<ol>${rows}</ol>` : `<p class="lb-none">No times yet.</p>`}${me}
+    </details>`;
+  }).join("");
 }
+// Remember which sections are collapsed.
+$("lbList").addEventListener("toggle", (e) => {
+  const d = e.target.closest?.(".lb-section");
+  if (!d) return;
+  const closed = new Set(store.get(STORE.lbClosed) || []);
+  const m = +d.dataset.m;
+  d.open ? closed.delete(m) : closed.add(m);
+  store.set(STORE.lbClosed, [...closed]);
+}, true);
 
 $("boardBtn").addEventListener("click", () => openBoard());
 $("lbTabs").addEventListener("click", (e) => {
