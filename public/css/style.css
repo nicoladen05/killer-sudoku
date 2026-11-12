@@ -104,7 +104,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 @media (orientation: portrait) {
   .app {
-    --board: min(calc(100vw - 16px), calc(100dvh - 330px), 640px);
+    --board: min(calc(100vw - 16px), calc(100dvh - 356px), 640px);
     grid-template-columns: var(--board);
     align-content: start;
     gap: 12px;
@@ -117,6 +117,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   .tools { order: 1; }
   .keypad { order: 2; }
   .area-hint { order: 3; }
+  .site-footer { order: 4; }
 }
 
 /* ---------- Board ---------- */
@@ -333,9 +334,13 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 
 .area-hint { margin: 0; font-size: 0.78rem; color: var(--muted); line-height: 1.4; text-align: center; }
 
+.site-footer { display: flex; justify-content: center; gap: 8px; font-size: 0.72rem; color: var(--muted); }
+.site-footer a { color: inherit; text-decoration: none; }
+.site-footer a:hover { color: var(--text); text-decoration: underline; }
+
 /* ---------- Phone portrait ---------- */
 @media (orientation: portrait) {
-  .topbar, .stats, .tools, .keypad, .area-hint { width: var(--board); margin: 0 auto; }
+  .topbar, .stats, .tools, .keypad, .area-hint, .site-footer { width: var(--board); margin: 0 auto; }
   .stats { padding: 0 4px; }
   .tools { gap: 4px; }
   .tool { padding: 6px 2px; }
@@ -366,7 +371,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   .badge { display: none; }
   .keypad { gap: 6px; }
   .key { aspect-ratio: auto; height: max(40px, calc((100dvh - 190px) / 3)); font-size: 1.4rem; }
-  .area-hint { display: none; }
+  .area-hint, .site-footer { display: none; }
 }
 
 @media (orientation: portrait) and (min-width: 600px) {
