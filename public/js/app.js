@@ -947,6 +947,7 @@ async function reviewCode(raw) {
 }
 
 function renderMerge(p, code) {
+  $("mergeGo").querySelector("span:not(.spin)").textContent = "Merge & link";
   const stat = (id, n, one, many) => { $(id).textContent = n; $(`${id}L`).textContent = n === 1 ? one : many; };
   for (const [prefix, c] of [["mDev", p.device], ["mPl", p.player], ["mAll", p.merged]]) {
     stat(`${prefix}Times`, c.times, "time", "times");
@@ -974,19 +975,113 @@ $("mergeGo").addEventListener("click", async () => {
   if (!pendingCode) return;
   const btn = $("mergeGo");
   busy(btn, true);
+  $("mergeBack").disabled = $("mergeCancel").disabled = true;
   mergeStatus("");
+  let party = null;
   try {
-    const msg = await adoptPlayer(await lb.useSyncCode(pendingCode));
+    const r = await lb.useSyncCode(pendingCode);
+    party = celebrateMerge(); // only once the server has really merged
+    const msg = await adoptPlayer(r);
+    await party.done;
     pendingCode = null;
     $("syncInput").value = "";
     syncView("main", -1);
+    party.reset();
     syncStatus(msg, "ok");
   } catch (e) {
+    party?.reset();
     mergeStatus(e.status ? escapeHtml(e.message) : offline, "error");
   } finally {
     busy(btn, false);
+    btn.classList.remove("done");
+    $("mergeBack").disabled = $("mergeCancel").disabled = false;
   }
 });
+
+/**
+ * The merge, shown: the two cards fly into the total, which pops with a ring
+ * and a burst of sparks while its numbers bounce; the button turns "Linked".
+ * A rare moment, so it may take a little over a second. Reduced motion: none of it.
+ * Each step starts when the previous animation finishes (not on timers), so it stays in step under load.
+ * Returns { done, reset }: `done` resolves when it's over, `reset` puts the screen back.
+ */
+function celebrateMerge() {
+  const root = $("syncMerge");
+  const anims = [];
+  const extras = [];
+  const reset = () => { anims.forEach((a) => a.cancel()); extras.forEach((e) => e.remove()); };
+  if (reduceMotion.matches || !root.animate) return { done: Promise.resolve(), reset };
+
+  const run = (el, frames, opts) => { const a = el.animate(frames, { fill: "forwards", ...opts }); anims.push(a); return a; };
+  const btn = $("mergeGo");
+  btn.classList.remove("busy"); // the server has answered; the button waits for the show
+  btn.classList.add("done");
+  const result = root.querySelector(".merge-result");
+  const icon = root.querySelector(".merge-result-icon");
+  const target = result.getBoundingClientRect();
+  const tx = target.left + target.width / 2;
+  const ty = target.top + target.height / 2;
+  const FLIGHT = 380;
+
+  // 1. The "+" and the arrow step aside; both cards fly into the total and are absorbed.
+  for (const sel of [".merge-plus", ".merge-down"]) {
+    run(root.querySelector(sel), [{ opacity: 1 }, { opacity: 0, transform: "scale(0.6)" }], { duration: 150, easing: EASE_OUT });
+  }
+  const flights = [...root.querySelectorAll(".merge-card")].map((card, i) => {
+    const r = card.getBoundingClientRect();
+    const dx = tx - (r.left + r.width / 2);
+    const dy = ty - (r.top + r.height / 2);
+    return run(card, [
+      { transform: "none", opacity: 1 },
+      { transform: `translate(${dx * 0.3}px, ${dy * 0.15 - 6}px) scale(0.92)`, opacity: 1, offset: 0.35 },
+      { transform: `translate(${dx}px, ${dy}px) scale(0.35)`, opacity: 0 },
+    ], { duration: FLIGHT - 40 * i, delay: 40 * i, easing: "cubic-bezier(0.77, 0, 0.175, 1)" });
+  });
+
+  // 2. Impact: the total pops (slight overshoot), a ring pulses out, sparks burst, numbers count up.
+  const impact = () => {
+    run(result, [{ transform: "scale(1)" }, { transform: "scale(1.045)", offset: 0.35 }, { transform: "scale(1)" }],
+      { duration: 480, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
+    run(icon, [{ transform: "none" }, { transform: "scale(1.18) rotate(-10deg)", offset: 0.4 }, { transform: "none" }],
+      { duration: 500, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
+
+    const ring = document.createElement("span");
+    ring.className = "merge-ring";
+    result.append(ring);
+    extras.push(ring);
+    const pulse = run(ring, [{ transform: "scale(1)", opacity: 0.7 }, { transform: "scale(1.08, 1.25)", opacity: 0 }], { duration: 560, easing: EASE_OUT });
+
+    const colors = ["var(--accent)", "var(--warm)", "var(--ok)"];
+    for (let i = 0; i < 12; i++) {
+      const spark = document.createElement("span");
+      spark.className = "merge-spark";
+      spark.style.background = colors[i % 3];
+      icon.append(spark);
+      extras.push(spark);
+      const angle = (i / 12) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const dist = 30 + Math.random() * 22;
+      run(spark, [
+        { transform: "translate(-50%, -50%) scale(1)", opacity: 1 },
+        { transform: `translate(calc(-50% + ${Math.cos(angle) * dist}px), calc(-50% + ${Math.sin(angle) * dist}px)) scale(0)`, opacity: 0.9 },
+      ], { duration: 520 + Math.random() * 160, easing: EASE_OUT });
+    }
+
+    // The total already shows the merged numbers; they bounce as the cards land in them.
+    [$("mAllTimes"), $("mAllDays")].forEach((n, i) => {
+      run(n, [{ transform: "none" }, { transform: "translateY(-3px) scale(1.18)", offset: 0.4 }, { transform: "none" }],
+        { duration: 420, delay: 60 * i, easing: "cubic-bezier(0.34, 1.56, 0.64, 1)" });
+    });
+
+    btn.querySelector("span:not(.spin)").textContent = "Linked";
+    enter(btn.querySelector("span:not(.spin)"), { blur: 2, duration: 180 });
+    navigator.vibrate?.(12);
+    // 3. A short beat on the finished total before leaving the screen.
+    return pulse.finished.then(() => run(result, [{ opacity: 1 }, { opacity: 1 }], { duration: 260 }).finished);
+  };
+
+  const done = Promise.all(flights.map((a) => a.finished)).then(impact).catch(() => {}); // cancelled: just end
+  return { done, reset };
+}
 
 /** After a sync code or passkey: take over the player's days, push this device's own, and say who we are now. */
 async function adoptPlayer(r) {
@@ -1217,13 +1312,15 @@ renderDailyBtn();
 syncStreak();
 
 // A sync link (#sync=CODE) from another device: show what linking would do; nothing changes until "Merge & link".
-{
+// Also when the link is opened in a tab that already has the game (only the hash changes then).
+function openSyncLink() {
   const m = location.hash.match(/^#sync=([A-Za-z0-9-]{8,12})$/);
-  if (m) {
-    history.replaceState(null, "", location.pathname + location.search);
-    openSync(m[1].toUpperCase().replace(/-/g, ""));
-  }
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  openSync(m[1].toUpperCase().replace(/-/g, ""));
 }
+openSyncLink();
+addEventListener("hashchange", openSyncLink);
 
 /** The daily to reopen on load: today's, or yesterday's if it is still being played. */
 function savedDaily() {
