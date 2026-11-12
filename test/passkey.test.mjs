@@ -97,7 +97,7 @@ for (const [alg, label] of [[-7, "ES256"], [-257, "RS256"]]) {
     await call(postStreak, env, "POST", { player: B, dates: [dailyDate()] });
     const [status, body] = await signIn(env, auth, B);
     assert.equal(status, 200);
-    assert.deepEqual(body, { player: A, name: "Ann", dates: [dailyDate()] });
+    assert.deepEqual(body, { player: A, name: "Ann", dates: [dailyDate()], passkeys: 1 });
   });
 }
 

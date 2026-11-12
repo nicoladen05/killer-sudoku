@@ -163,38 +163,115 @@
     </form>
   </dialog>
 
-  <dialog class="dialog" id="syncDialog" aria-labelledby="syncTitle">
-    <div class="lb-head">
-      <h2 id="syncTitle">Other devices</h2>
-      <form method="dialog"><button class="icon-btn" aria-label="Close" value="close">
-        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
-      </button></form>
-    </div>
-    <p>Your name, leaderboard times and streak are kept with this browser. To play on another device too, get a code here and enter it there, or save a passkey. No account needed.</p>
-    <div class="sync-give">
-      <button type="button" class="primary" id="syncMake">Get a code</button>
-      <div class="sync-code-box" id="syncCodeBox" hidden>
-        <output class="sync-code" id="syncCode"></output>
-        <p class="sync-note">Enter it on your other device within 15 minutes. It works once. Or open this link there: <button type="button" class="link-inline" id="syncCopy">Copy link</button></p>
+  <dialog class="dialog sync-dialog" id="syncDialog" aria-labelledby="syncTitle">
+    <div class="sync-view" id="syncMain">
+      <div class="sync-top">
+        <div class="sync-intro">
+          <h2 id="syncTitle">Other devices</h2>
+          <p>Your name, times and streak live in this browser. Link another device with a code or a passkey. No account needed.</p>
+        </div>
+        <form method="dialog"><button class="sync-icon" aria-label="Close" value="close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></form>
+      </div>
+
+      <section class="sync-card" aria-labelledby="syncCodeLabel">
+        <div class="sync-card-head">
+          <span id="syncCodeLabel">Your code</span>
+          <span class="sync-timer" id="syncTimer" title="Time left before this code expires" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            <span id="syncTimerText"></span>
+          </span>
+        </div>
+        <div class="sync-tiles" id="syncTiles" role="img" aria-label="Getting a code"></div>
+        <p class="sync-card-msg" id="syncCodeMsg" hidden></p>
+        <div class="sync-two" id="syncCopyRow">
+          <button type="button" class="sync-btn primary" id="syncCopyCode" data-label="Copy code">
+            <svg class="i-idle" viewBox="0 0 24 24" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            <svg class="i-done" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            <span>Copy code</span>
+          </button>
+          <button type="button" class="sync-btn" id="syncCopyLink" data-label="Copy link">
+            <svg class="i-idle" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <svg class="i-done ok" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+            <span>Copy link</span>
+          </button>
+        </div>
+        <button type="button" class="sync-btn primary" id="syncRetry" hidden><span>Try again</span></button>
+      </section>
+
+      <form class="sync-have" id="syncForm">
+        <label for="syncInput">Have a code?</label>
+        <div class="sync-have-row">
+          <div class="sync-field">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <input id="syncInput" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" required>
+          </div>
+          <button type="submit" class="sync-icon sync-go" id="syncGo" aria-label="Link this device" title="Link this device">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </button>
+        </div>
+      </form>
+
+      <p class="sync-status" id="syncStatus" role="status" hidden></p>
+
+      <div class="sync-passkey" id="passkeyBox" hidden>
+        <div class="sync-pk-icon">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.59 17.41A2 2 0 0 0 2 18.83V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.17a2 2 0 0 0 1.42-.59l.81-.81a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+        </div>
+        <div class="sync-pk-text">
+          <span class="sync-pk-title">Passkey</span>
+          <span class="sync-pk-state" id="pkState"></span>
+        </div>
+        <button type="button" class="sync-btn sync-pk-save" id="pkSave">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        </button>
+        <button type="button" class="sync-btn" id="pkSignIn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="m10 17 5-5-5-5"/><path d="M15 12H3"/></svg>
+          <span>Sign in</span>
+        </button>
       </div>
     </div>
-    <form class="lb-submit sync-take" id="syncForm">
-      <label for="syncInput">Got a code from another device?</label>
-      <div class="lb-row">
-        <input id="syncInput" maxlength="12" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD-EFGH" required>
-        <button type="submit">Link</button>
+
+    <div class="sync-view" id="syncMerge" hidden>
+      <div class="sync-nav">
+        <button type="button" class="sync-icon" id="mergeBack" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg></button>
+        <form method="dialog"><button class="sync-icon" aria-label="Close" value="close"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></form>
       </div>
-      <small class="sync-note">This device then plays as that player. Its own times and streak days are added to theirs.</small>
-    </form>
-    <div class="sync-passkey" id="passkeyBox" hidden>
-      <p class="sync-head">Passkey</p>
-      <p class="sync-note" id="passkeyNote">Your password manager keeps the passkey on all your devices, so you can get your progress back anywhere, even without this device.</p>
-      <div class="sync-pk-row">
-        <button type="button" id="pkSave">Save passkey</button>
-        <button type="button" id="pkSignIn">Sign in</button>
+      <div class="sync-intro">
+        <h2 id="mergeTitle">Merge with this player?</h2>
+        <p>Your times and streak days are added to theirs. This device then plays as them.</p>
+      </div>
+      <div class="merge-diagram">
+        <div class="merge-pair">
+          <div class="merge-card">
+            <span class="merge-who"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></svg>This device</span>
+            <span class="merge-stat"><span class="merge-ic times"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/></svg></span><b id="mDevTimes">0</b><span id="mDevTimesL">times</span></span>
+            <span class="merge-stat"><span class="merge-ic days"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></span><b id="mDevDays">0</b><span id="mDevDaysL">days</span></span>
+          </div>
+          <div class="merge-plus" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5v14"/></svg></div>
+          <div class="merge-card">
+            <span class="merge-who mono"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="5"/><path d="M20 21a8 8 0 0 0-16 0"/></svg><span id="mergeCode"></span></span>
+            <span class="merge-stat"><span class="merge-ic times"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/></svg></span><b id="mPlTimes">0</b><span id="mPlTimesL">times</span></span>
+            <span class="merge-stat"><span class="merge-ic days"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></span><b id="mPlDays">0</b><span id="mPlDaysL">days</span></span>
+          </div>
+        </div>
+        <div class="merge-down" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg></div>
+        <div class="merge-result">
+          <div class="merge-result-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></div>
+          <div class="merge-result-text">
+            <span>One player, on both devices</span>
+            <div class="merge-row">
+            <span class="merge-stat"><span class="merge-ic times"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 2h4"/><path d="m12 14 3-3"/><circle cx="12" cy="14" r="8"/></svg></span><b id="mAllTimes">0</b><span id="mAllTimesL">times</span></span>
+            <span class="merge-stat"><span class="merge-ic days"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></span><b id="mAllDays">0</b><span id="mAllDaysL">days</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="sync-status" id="mergeStatus" role="status" hidden></p>
+      <div class="sync-two merge-actions">
+        <button type="button" class="sync-btn tall" id="mergeCancel"><span>Cancel</span></button>
+        <button type="button" class="sync-btn primary tall" id="mergeGo"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg><span>Merge &amp; link</span></button>
       </div>
     </div>
-    <p class="lb-status" id="syncStatus" hidden></p>
   </dialog>
 
   <div class="loading" id="loading" hidden><span></span>Building puzzle…</div>

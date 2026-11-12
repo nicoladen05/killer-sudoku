@@ -3,9 +3,12 @@
 //
 //   POST /api/sync  { player, name }
 //        -> { code, expires }  a one-time code, valid for 15 minutes
+//   PUT  /api/sync  { code, player, preview: true }
+//        -> { same, device, player, merged }  what entering the code would do,
+//           as { times, days } counts; the code stays valid
 //   PUT  /api/sync  { code, player, name }
-//        -> { player, name, dates }  the device that sends this now plays as
-//           the player who made the code
+//        -> { player, name, dates, passkeys }  the device that sends this now
+//           plays as the player who made the code
 //
 // A player is only the random id kept in their browser, and that id is never
 // shown or sent to anyone else. A code stands in for it: short, one-time and
@@ -92,9 +95,28 @@ export async function onRequestPut({ request, env }) {
     return json({ error: "That code is wrong or has expired. Codes work for 15 minutes and only once." }, 404);
   }
 
+  if (b.preview) return json(await previewLink(db, b.player, row.player));
   return json(await linkPlayer(db, b.player, row.player, row.name || cleanName(b.name), [
     db.prepare("DELETE FROM sync_codes WHERE code = ?1").bind(code),
   ]));
+}
+
+/**
+ * What linking would do, as counts of leaderboard times and streak days: for
+ * this device, for the code's player and for both together. Times on the same
+ * puzzle count once, as linkPlayer keeps only one of them.
+ */
+export async function previewLink(db, from, to) {
+  const times = async (...players) => (await db
+    .prepare(`SELECT COUNT(DISTINCT puzzle) AS n FROM scores WHERE player IN (${players.map((_, i) => `?${i + 1}`).join(", ")})`)
+    .bind(...players).first())?.n || 0;
+  const [fromDays, toDays] = [await streakDays(db, from), await streakDays(db, to)];
+  return {
+    same: from === to,
+    device: { times: await times(from), days: fromDays.length },
+    player: { times: await times(to), days: toDays.length },
+    merged: { times: await times(from, to), days: new Set([...fromDays, ...toDays]).size },
+  };
 }
 
 /**
@@ -116,5 +138,6 @@ export async function linkPlayer(db, from, to, name, first = []) {
   }
   if (name) steps.push(db.prepare("UPDATE scores SET name = ?1 WHERE player = ?2 AND name != ?1").bind(name, to));
   if (steps.length) await db.batch(steps);
-  return { player: to, name, dates: await streakDays(db, to) };
+  const keys = await db.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE player = ?1").bind(to).first();
+  return { player: to, name, dates: await streakDays(db, to), passkeys: keys?.n || 0 };
 }

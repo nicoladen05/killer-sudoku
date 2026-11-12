@@ -68,12 +68,23 @@ test("a code moves the other device's times and days over to the code's player",
   assert.equal(s1, 200);
   assert.equal(made.expires, TTL);
 
+  // A preview shows what would happen and leaves the code valid.
+  const [s0, preview] = await call(useCode, env, "PUT", { code: made.code, player: B, preview: true });
+  assert.equal(s0, 200);
+  assert.deepEqual(preview, {
+    same: false,
+    device: { times: 2, days: 2 },
+    player: { times: 2, days: 1 },
+    merged: { times: 3, days: 2 },
+  });
+
   const typed = `${made.code.slice(0, 4).toLowerCase()} ${made.code.slice(4)}`;
   const [s2, used] = await call(useCode, env, "PUT", { code: typed, player: B, name: "Phone" });
   assert.equal(s2, 200);
   assert.equal(used.player, A);
   assert.equal(used.name, "Ann");
   assert.deepEqual(used.dates, [addDays(today, -1), today]);
+  assert.equal(used.passkeys, 0);
   assert.deepEqual(scoresOf(env.DB, A), [
     { name: "Ann", puzzle: "p1", time: 300 },
     { name: "Ann", puzzle: "p2", time: 500 },

@@ -736,37 +736,210 @@ $("newDialog").addEventListener("close", () => {
   else if (v === "resume") resumeNormal();
 });
 
-// ---------- Other devices (sync codes) ----------
+// ---------- Other devices (sync codes and passkeys) ----------
 
-function syncStatus(text, isError = false) {
-  const el = $("syncStatus");
+const showCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
+const syncLink = (code) => `${location.origin}${location.pathname}#sync=${code}`;
+/** A typed or pasted code as ABCD-EFGH when it has the right length, else as typed. */
+const tidyCode = (raw) => {
+  const c = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return c.length === 8 ? showCode(c) : raw.trim();
+};
+const offline = "Couldn't reach the server. Check your connection and try again.";
+const CHECK_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
+
+/** This player's current code: { code, player, expires (ms) }, kept while the page is open. */
+let myCode = null;
+let codeLoading = false;
+let codeTimer = 0;
+/** The code being confirmed on the merge screen. */
+let pendingCode = null;
+
+function statusLine(id, text, kind = "") {
+  const el = $(id);
   el.hidden = !text;
-  el.classList.toggle("error", isError);
+  el.className = `sync-status ${kind}`.trim();
   el.innerHTML = text || "";
 }
+const syncStatus = (text, kind) => statusLine("syncStatus", text, kind);
+const mergeStatus = (text, kind) => statusLine("mergeStatus", text, kind);
 
-/** `code` fills in the code field, e.g. from a sync link. */
+function syncView(name) {
+  $("syncMain").hidden = name !== "main";
+  $("syncMerge").hidden = name !== "merge";
+}
+
+/** `code` comes from a sync link: go straight to the merge screen for it. */
 function openSync(code = "") {
-  $("syncCodeBox").hidden = true;
-  $("syncMake").hidden = false;
-  $("syncMake").disabled = false;
-  $("syncInput").value = code.length === 8 ? showCode(code) : code;
-  syncStatus(code ? "Press Link to bring your progress from the other device to this one." : "");
+  syncView("main");
+  syncStatus("");
+  $("syncInput").value = "";
+  renderPasskey();
   if ($("boardDialog").open) $("boardDialog").close();
   if (!$("syncDialog").open) $("syncDialog").showModal();
-  renderPasskey();
-  if (code) $("syncInput").focus();
+  loadCode();
+  if (code) {
+    $("syncInput").value = tidyCode(code);
+    reviewCode($("syncInput").value);
+  }
 }
+$("syncDialog").addEventListener("close", () => { clearInterval(codeTimer); codeTimer = 0; });
+
+function renderCode(error = "") {
+  const code = myCode?.code;
+  const chars = code ? [...code] : Array(8).fill("");
+  const tile = (c) => `<span class="sync-tile">${escapeHtml(c)}</span>`;
+  const tiles = $("syncTiles");
+  tiles.innerHTML = `${chars.slice(0, 4).map(tile).join("")}<span class="sync-dash"></span>${chars.slice(4).map(tile).join("")}`;
+  tiles.setAttribute("aria-label", code ? `Your code: ${showCode(code)}` : "Getting a code");
+  tiles.classList.toggle("waiting", !code);
+  tiles.hidden = !!error;
+  $("syncCodeMsg").hidden = !error;
+  $("syncCodeMsg").textContent = error;
+  $("syncCopyRow").hidden = !!error;
+  $("syncRetry").hidden = !error;
+  $("syncCopyCode").disabled = $("syncCopyLink").disabled = !code;
+  $("syncTimer").hidden = !code;
+}
+
+/** Count down the code's 15 minutes; get a new one when it runs out. */
+function tick() {
+  if (!myCode) return;
+  const left = Math.max(0, Math.round((myCode.expires - Date.now()) / 1000));
+  $("syncTimerText").textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  if (!left) { myCode = null; loadCode(); }
+}
+
+/** Show this player's code, reusing the current one while it has more than a minute left. */
+async function loadCode() {
+  clearInterval(codeTimer);
+  codeTimer = setInterval(tick, 1000);
+  const fresh = myCode && myCode.player === lb.playerId() && myCode.expires - Date.now() > 60000;
+  if (!fresh) {
+    myCode = null;
+    renderCode();
+    if (codeLoading) return;
+    codeLoading = true;
+    try {
+      await syncStreak(); // so the other device gets every day
+      const { code, expires } = await lb.makeSyncCode();
+      myCode = { code, player: lb.playerId(), expires: Date.now() + expires * 1000 };
+    } catch (e) {
+      clearInterval(codeTimer);
+      renderCode(e.status ? e.message : "Couldn't get a code. Check your connection.");
+      return;
+    } finally {
+      codeLoading = false;
+    }
+  }
+  renderCode();
+  tick();
+}
+$("syncRetry").addEventListener("click", loadCode);
+
+/** Swap a button's label for a moment ("Copied"). */
+function flash(btn, text) {
+  const label = btn.querySelector("span");
+  btn.classList.toggle("copied", text === "Copied");
+  label.textContent = text;
+  clearTimeout(btn.flashTimer);
+  btn.flashTimer = setTimeout(() => { btn.classList.remove("copied"); label.textContent = btn.dataset.label; }, 1600);
+}
+
+$("syncCopyCode").addEventListener("click", async () => {
+  if (!myCode) return;
+  try { await navigator.clipboard.writeText(showCode(myCode.code)); flash($("syncCopyCode"), "Copied"); }
+  catch { flash($("syncCopyCode"), "Couldn't copy"); }
+});
+
+$("syncCopyLink").addEventListener("click", async () => {
+  if (!myCode) return;
+  const url = syncLink(myCode.code);
+  try {
+    if (navigator.share && matchMedia("(hover: none)").matches) { await navigator.share({ url }); return; }
+    await navigator.clipboard.writeText(url);
+    flash($("syncCopyLink"), "Copied");
+  } catch (e) {
+    if (e?.name !== "AbortError") flash($("syncCopyLink"), "Couldn't copy");
+  }
+});
+
+/** Check a code and show what linking would do, before anything changes. */
+async function reviewCode(raw) {
+  const btn = $("syncGo");
+  btn.disabled = true;
+  syncStatus("");
+  try {
+    await syncStreak(); // count this device's newest days too
+    const p = await lb.previewSyncCode(raw);
+    if (p.same) { syncStatus("That's this device's own code. Enter it on your other device.", "error"); return; }
+    pendingCode = raw;
+    renderMerge(p, tidyCode(raw));
+    mergeStatus("");
+    syncView("merge");
+    $("mergeGo").focus();
+  } catch (e) {
+    syncStatus(e.status ? escapeHtml(e.message) : offline, "error");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderMerge(p, code) {
+  const stat = (id, n, one, many) => { $(id).textContent = n; $(`${id}L`).textContent = n === 1 ? one : many; };
+  for (const [prefix, c] of [["mDev", p.device], ["mPl", p.player], ["mAll", p.merged]]) {
+    stat(`${prefix}Times`, c.times, "time", "times");
+    stat(`${prefix}Days`, c.days, "day", "days");
+  }
+  $("mergeCode").textContent = code;
+}
+
+$("syncForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const code = $("syncInput").value.trim();
+  if (code) reviewCode(code);
+});
+$("syncInput").addEventListener("blur", () => { $("syncInput").value = tidyCode($("syncInput").value); });
+
+function backToMain() {
+  pendingCode = null;
+  syncView("main");
+  $("syncInput").focus();
+}
+$("mergeBack").addEventListener("click", backToMain);
+$("mergeCancel").addEventListener("click", backToMain);
+
+$("mergeGo").addEventListener("click", async () => {
+  if (!pendingCode) return;
+  const btn = $("mergeGo");
+  btn.disabled = true;
+  mergeStatus("Linking…");
+  try {
+    const msg = await adoptPlayer(await lb.useSyncCode(pendingCode));
+    pendingCode = null;
+    $("syncInput").value = "";
+    syncView("main");
+    syncStatus(msg, "ok");
+  } catch (e) {
+    mergeStatus(e.status ? escapeHtml(e.message) : offline, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 /** After a sync code or passkey: take over the player's days, push this device's own, and say who we are now. */
 async function adoptPlayer(r) {
   store.set(STORE.daysSynced, r.dates);
   store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), r.dates));
+  store.set(STORE.passkey, r.passkeys ? 1 : 0);
+  myCode = null; // it was for the player this device used to be
   await syncStreak();
   renderDailyBtn();
+  renderPasskey();
+  loadCode();
   lb.retryPending();
   const s = dailyStreak();
-  const who = r.name ? ` You're playing as <b>${escapeHtml(r.name)}</b>` : " Linked";
+  const who = r.name ? ` You're playing as <b>${escapeHtml(r.name)}</b>` : " This device is linked";
   return `Done.${who}${s.current ? ` with a ${s.current}-day streak` : ""}.`;
 }
 
@@ -774,12 +947,17 @@ async function adoptPlayer(r) {
 function passkeyError(e, fallback) {
   if (e?.name === "NotAllowedError" || e?.name === "AbortError") return syncStatus("");
   if (e?.name === "InvalidStateError") return syncStatus("This password manager already has a passkey for you.");
-  syncStatus(e?.status ? escapeHtml(e.message) : fallback, true);
+  syncStatus(e?.status ? escapeHtml(e.message) : fallback, "error");
 }
 
 function renderPasskey() {
+  const saved = !!store.get(STORE.passkey);
   $("passkeyBox").hidden = !passkeysSupported();
-  if (store.get(STORE.passkey)) $("passkeyNote").textContent = "You have a passkey. Use Sign in on any device where your password manager has it.";
+  $("passkeyBox").classList.toggle("saved", saved);
+  $("pkState").innerHTML = saved ? `${CHECK_SVG}Saved` : "Not saved yet";
+  const label = saved ? "Save another passkey" : "Save a passkey";
+  $("pkSave").setAttribute("aria-label", label);
+  $("pkSave").title = label;
 }
 
 $("pkSave").addEventListener("click", async () => {
@@ -789,7 +967,7 @@ $("pkSave").addEventListener("click", async () => {
     await savePasskey();
     store.set(STORE.passkey, 1);
     renderPasskey();
-    syncStatus("Passkey saved. To play on another device, tap Sign in there.");
+    syncStatus("Passkey saved. On another device, tap Sign in.", "ok");
   } catch (e) {
     passkeyError(e, "Couldn't save the passkey. Check your connection and try again.");
   } finally {
@@ -801,62 +979,11 @@ $("pkSignIn").addEventListener("click", async () => {
   $("pkSignIn").disabled = true;
   syncStatus("");
   try {
-    const r = await signInWithPasskey();
-    store.set(STORE.passkey, 1);
-    renderPasskey();
-    syncStatus(await adoptPlayer(r));
+    syncStatus(await adoptPlayer(await signInWithPasskey()), "ok");
   } catch (e) {
     passkeyError(e, "Couldn't sign in. Check your connection and try again.");
   } finally {
     $("pkSignIn").disabled = false;
-  }
-});
-
-const syncLink = (code) => `${location.origin}${location.pathname}#sync=${code}`;
-const showCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
-
-$("syncMake").addEventListener("click", async () => {
-  $("syncMake").disabled = true;
-  syncStatus("");
-  try {
-    await syncStreak(); // so the other device gets every day
-    const { code } = await lb.makeSyncCode();
-    $("syncCode").textContent = showCode(code);
-    $("syncCopy").dataset.code = code;
-    $("syncCopy").textContent = "Copy link";
-    $("syncCodeBox").hidden = false;
-    $("syncMake").hidden = true;
-  } catch (e) {
-    $("syncMake").disabled = false;
-    syncStatus(e.status ? escapeHtml(e.message) : "Couldn't reach the server. Check your connection and try again.", true);
-  }
-});
-
-$("syncCopy").addEventListener("click", async () => {
-  const url = syncLink($("syncCopy").dataset.code);
-  try {
-    if (navigator.share && matchMedia("(hover: none)").matches) { await navigator.share({ url }); return; }
-    await navigator.clipboard.writeText(url);
-    $("syncCopy").textContent = "Copied";
-  } catch (e) {
-    if (e?.name !== "AbortError") $("syncCopy").textContent = "Couldn't copy";
-  }
-});
-
-$("syncForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const code = $("syncInput").value.trim();
-  if (!code) return;
-  const btn = $("syncForm").querySelector("button");
-  btn.disabled = true;
-  syncStatus("Linking…");
-  try {
-    syncStatus(await adoptPlayer(await lb.useSyncCode(code)));
-    $("syncInput").value = "";
-  } catch (err) {
-    syncStatus(err.status ? escapeHtml(err.message) : "Couldn't reach the server. Check your connection and try again.", true);
-  } finally {
-    btn.disabled = false;
   }
 });
 
@@ -1026,7 +1153,7 @@ lb.retryPending();
 renderDailyBtn();
 syncStreak();
 
-// A sync link (#sync=CODE) from another device: offer to link, but only on a click.
+// A sync link (#sync=CODE) from another device: show what linking would do; nothing changes until "Merge & link".
 {
   const m = location.hash.match(/^#sync=([A-Za-z0-9-]{8,12})$/);
   if (m) {

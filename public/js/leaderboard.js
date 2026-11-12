@@ -90,6 +90,11 @@ export function makeSyncCode() {
   return call("POST", { player: playerId(), name: getName() }, "", "/api/sync");
 }
 
+/** What entering a code would do, as { same, device, player, merged } counts. The code stays valid. */
+export function previewSyncCode(code) {
+  return call("PUT", { code, player: playerId(), preview: true }, "", "/api/sync");
+}
+
 /** Enter a code from another device: from now on this browser plays as that player. */
 export async function useSyncCode(code) {
   const r = await call("PUT", { code, player: playerId(), name: getName() }, "", "/api/sync");
@@ -97,3 +102,4 @@ export async function useSyncCode(code) {
   if (r.name) setName(r.name);
   return r;
 }
+
