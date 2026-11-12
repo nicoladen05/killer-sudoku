@@ -2,7 +2,7 @@
 //
 //   GET  /api/scores?level=hard[&player=<id>]  -> best time per player, top 50
 //
-// Ranked time = solve time + hint penalty (see hintPenalty); `time` in responses
+// Ranked time = solve time + penalties (see penalty); `time` in responses
 // is that ranked time and `raw` the clock time.
 //   POST /api/scores  { level, player, name, time, mistakes, hints, puzzle }
 //
@@ -23,7 +23,11 @@ const RATE = { perHour: 20, perDay: 100 };
  * Must match hintPenalty in public/js/app.js.
  */
 export const hintPenalty = (n) => 30 * n * (n + 1);
-const PENALTY_SQL = "30 * hints * (hints + 1)";
+/** Seconds added per mistake. Flat, since mistakes are capped at 2 for ranked games. */
+export const MISTAKE_PENALTY = 30;
+/** Total seconds added to the ranked time. Must match penalty in public/js/app.js. */
+export const penalty = (mistakes, hints) => MISTAKE_PENALTY * mistakes + hintPenalty(hints);
+const PENALTY_SQL = `${MISTAKE_PENALTY} * mistakes + 30 * hints * (hints + 1)`;
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -119,7 +123,7 @@ export async function onRequestPost({ request, env }) {
   await env.DB.prepare("UPDATE scores SET name = ?1 WHERE player = ?2 AND name != ?1").bind(name, b.player).run();
 
   const me = await rankOf(env.DB, level, b.player);
-  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time + hintPenalty(b.hints), me });
+  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time + penalty(b.mistakes, b.hints), me });
 }
 
 /** Change the display name on all of a player's entries. */
