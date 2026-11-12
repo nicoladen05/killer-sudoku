@@ -434,8 +434,23 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .lb-extra span { white-space: nowrap; }
 .lb-time { font-weight: 600; }
 .dialog .lb-empty { text-align: center; padding: 32px 0; margin: 0; }
-.lb-me:empty { display: none; }
-.lb-me { font-size: 0.9rem; padding: 8px; border-radius: 8px; background: var(--accent-soft); }
+.dialog .lb-me { font-size: 0.85rem; padding: 8px; margin: 4px 0 0; border-radius: 8px; background: var(--accent-soft); color: var(--text); }
+.lb-section + .lb-section { margin-top: 8px; }
+.lb-section summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none;
+  padding: 8px; border-radius: 8px; font-weight: 600; font-size: 0.9rem;
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
+.lb-section summary::-webkit-details-marker { display: none; }
+.lb-section summary::before {
+  content: ""; width: 7px; height: 7px; margin: 0 4px 0 2px;
+  border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(-45deg);
+  transition: transform 150ms;
+}
+.lb-section[open] summary::before { transform: rotate(45deg); }
+.lb-section summary:hover { background: var(--key-hover); }
+.lb-count { margin-left: auto; font-size: 0.75rem; font-weight: 500; color: var(--muted); }
+.dialog .lb-none { margin: 0; padding: 6px 8px 10px 30px; font-size: 0.85rem; }
 .lb-foot { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 .lb-foot b { color: var(--text); }
 

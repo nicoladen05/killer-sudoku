@@ -25,7 +25,7 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 - Number pad with remaining counts, Undo, Erase, Notes and Hint.
 - Mistake counter (three mistakes ends the game, or keep playing without a limit) and a timer that pauses when the tab is hidden.
 - **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit, or hold Shift and press the arrow keys) to highlight it. The keypad then lights up the numbers that area is still missing.
-- **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. Each player shows with their best time, ranked by time plus penalties, then mistakes. Each mistake adds 30 seconds. The first hint adds 1 minute, the second 2 more, the third 3 more and so on (5 hints = 15 minutes), so spamming Hint never pays off. Games continued past three mistakes don't count.
+- **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. The board is split into collapsible sections by mistake count (none, 1, 2); each player shows with their best time in each section they have a solve in, ranked by time plus a hint penalty. The first hint adds 1 minute, the second 2 more, the third 3 more and so on (5 hints = 15 minutes), so spamming Hint never pays off. Games continued past three mistakes don't count.
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
 
@@ -79,7 +79,7 @@ npm run deploy
 
 `functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is `migrations/0001_scores.sql`.
 
-- `GET /api/scores?level=hard&player=<id>`: top 50 (best time per player) and your own rank.
+- `GET /api/scores?level=hard&player=<id>`: one section per mistake count, each with the top 50 (best time per player) and your own rank.
 - `POST /api/scores`: post a solve. `PUT /api/scores`: rename a player.
 
 The game runs in the browser, so results can't be proven. The API only keeps out junk: valid level, a minimum believable time per level, at most 2 mistakes, a cleaned name of up to 20 characters, one entry per player per puzzle, and at most 20 posts per hour (100 per day) from one IP. IPs are stored only as a hash salted with the date.
