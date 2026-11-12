@@ -244,6 +244,17 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   display: grid; place-items: center;
 }
 .icon-btn:hover { background: var(--key-hover); color: var(--text); }
+.daily-btn { position: relative; }
+.streak-badge {
+  position: absolute; top: 3px; right: 1px;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+  font-size: 0.62rem; font-weight: 700; line-height: 16px; font-style: normal; font-variant-numeric: tabular-nums; text-align: center;
+  background: var(--line); color: var(--muted);
+  pointer-events: none;
+}
+.streak-badge:empty { min-width: 8px; height: 8px; padding: 0; top: 6px; right: 5px; }
+.streak-badge.todo { background: var(--accent); color: var(--surface); }
+.streak-badge[hidden] { display: none; }
 .icon-btn svg { width: 22px; height: 22px; }
 .i-moon { display: none; }
 :root[data-theme="dark"] .i-sun { display: none; }
@@ -386,6 +397,13 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 }
 .levels button:hover, .end-actions button:hover { background: var(--key-hover); }
 .levels button.current { border-color: var(--accent); color: var(--accent); }
+.daily-pick { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.daily-pick small { font-weight: 450; font-size: 0.8rem; color: var(--muted); }
+.resume-normal {
+  width: 100%; margin-bottom: 12px; padding: 10px; border-radius: 10px;
+  border: 1px dashed var(--line); background: none; color: var(--accent); font-weight: 550;
+}
+.resume-normal[hidden] { display: none; }
 .end-actions { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 8px; }
 .end-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
 .link { border: 0; background: none; color: var(--muted); width: 100%; padding: 8px; }
@@ -414,7 +432,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .lb-head { display: flex; align-items: center; justify-content: space-between; }
 .dialog .lb-head h2 { margin: 0; }
 .lb-head .icon-btn { margin-right: -8px; }
-.lb-tabs { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; padding: 3px; border-radius: 10px; background: var(--bg); }
+.lb-tabs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 2px; padding: 3px; border-radius: 10px; background: var(--bg); }
 .lb-tabs button {
   border: 0; background: none; border-radius: 8px; padding: 7px 0;
   font-size: 0.82rem; font-weight: 550; color: var(--muted);
@@ -433,6 +451,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .lb-extra { font-size: 0.75rem; color: var(--muted); text-align: right; }
 .lb-extra span { white-space: nowrap; }
 .lb-time { font-weight: 600; }
+.dialog .lb-day { font-size: 0.8rem; margin: 0 8px 8px; }
 .dialog .lb-empty { text-align: center; padding: 32px 0; margin: 0; }
 .dialog .lb-me { font-size: 0.85rem; padding: 8px; margin: 4px 0 0; border-radius: 8px; background: var(--accent-soft); color: var(--text); }
 .lb-list li.lb-sep {

@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "npx --yes serve public -l 8080",
     "dev:full": "npx --yes wrangler pages dev",
-    "db:local": "npx --yes wrangler d1 execute cagey-leaderboard --local --file migrations/0001_scores.sql",
+    "db:local": "npx --yes wrangler d1 execute cagey-leaderboard --local --file migrations/0001_scores.sql && npx --yes wrangler d1 execute cagey-leaderboard --local --file migrations/0002_daily.sql",
     "test": "node --test",
     "deploy": "npx --yes wrangler pages deploy public --project-name cagey"
   }

@@ -26,6 +26,7 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 - Mistake counter (three mistakes ends the game, or keep playing without a limit) and a timer that pauses when the tab is hidden.
 - **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit, or hold Shift and press the arrow keys) to highlight it. The keypad then lights up the numbers that area is still missing.
 - **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. Everyone is in one ranking: solves with fewer mistakes always rank above solves with more, then by time plus a hint penalty. A subtle label marks where each mistake count starts. Each player appears once, with their best entry (fewest mistakes, then fastest). The first hint adds 1 minute, the second 2 more, the third 3 more and so on (5 hints = 15 minutes), so spamming Hint never pays off. Games continued past three mistakes don't count.
+- **Daily challenge** (calendar button, top right): one Hard puzzle a day, the same for everyone, with its own leaderboard. A new puzzle starts at midnight German time (Europe/Berlin). You can replay it as often as you like, but only your first finished run is ranked, because a replay is mostly memory. The badge on the button shows your streak, the number of days in a row you finished the daily (any finished run counts, also replays and games past three mistakes). It turns blue while today's puzzle is still open. After solving you can share a spoiler-free result. The daily has its own saved game, so it doesn't replace a puzzle you're in the middle of ("Back to your … game" in the New game dialog).
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
 
@@ -50,7 +51,7 @@ npm run dev    # serves ./public on http://localhost:8080
 npm test       # checks puzzles are valid, unique and solvable by logic
 
 # with the leaderboard API (local D1 database):
-npm run db:local   # create the table once
+npm run db:local   # create the tables once
 npm run dev:full   # http://localhost:8788
 ```
 
@@ -77,10 +78,13 @@ npm run deploy
 
 ### Leaderboard backend
 
-`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is `migrations/0001_scores.sql`.
+`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is in `migrations/` (`0001_scores.sql`, then `0002_daily.sql`). Apply a new migration to both databases, e.g. `npx wrangler d1 execute cagey-leaderboard --remote --file migrations/0002_daily.sql` (and the same for `cagey-leaderboard-preview`).
 
 - `GET /api/scores?level=hard&player=<id>`: top 50 (best time per player and mistake count, fewer mistakes first) and your own rank.
-- `POST /api/scores`: post a solve. `PUT /api/scores`: rename a player.
+- `GET /api/scores?daily=2026-11-12&player=<id>`: the same for one day's daily challenge.
+- `POST /api/scores`: post a solve (with `daily: "<date>"` for a daily). `PUT /api/scores`: rename a player.
+
+How the daily works: the puzzle is generated in the browser from a seed made from the date (`js/daily.js`), so no server generation is needed. Daily entries are only accepted for today and yesterday (German time), and only at level Hard. The first puzzle hash posted for a day is stored in the `daily` table; later entries must match it, so everyone on a daily board played the same puzzle. Changing the generator in `engine.js` changes the daily puzzles too, so avoid deploying a generator change during the day (or bump `DAILY_VERSION`, which changes every day's puzzle). Daily entries don't appear on the Hard board.
 
 The game runs in the browser, so results can't be proven. The API only keeps out junk: valid level, a minimum believable time per level, at most 2 mistakes, a cleaned name of up to 20 characters, one entry per player per puzzle, and at most 20 posts per hour (100 per day) from one IP. IPs are stored only as a hash salted with the date.
 
@@ -92,11 +96,12 @@ public/
   css/style.css     styles and light/dark themes
   js/app.js         UI, input, persistence
   js/leaderboard.js leaderboard API client
+  js/daily.js       daily challenge: date, seed and streak (no DOM, also used by the API and tests)
   js/engine.js      brute-force solver and puzzle generator (no DOM, also used by tests)
   js/logic.js       human-style logic solver used to accept and grade puzzles
   js/worker.js      runs the generator off the main thread
   _headers          Cloudflare Pages response headers
 functions/api/scores.js  leaderboard API (Pages Function + D1)
 migrations/        D1 schema
-test/               node:test suite for the engine
+test/               node:test suite for the engine, leaderboard and daily
 ```

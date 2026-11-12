@@ -42,8 +42,10 @@ async function call(method, body, query = "") {
   return data;
 }
 
-export function fetchScores(level) {
-  return call("GET", null, `?level=${encodeURIComponent(level)}&player=${encodeURIComponent(playerId())}`);
+/** Scores for a level, or for a daily challenge when `daily` is a date. */
+export function fetchScores(level, daily = null) {
+  const board = daily ? `daily=${encodeURIComponent(daily)}` : `level=${encodeURIComponent(level)}`;
+  return call("GET", null, `?${board}&player=${encodeURIComponent(playerId())}`);
 }
 
 /** Submit a solve. If the network fails it is kept and retried later. */
