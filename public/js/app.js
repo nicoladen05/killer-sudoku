@@ -1,5 +1,6 @@
 import { rowOf, colOf, boxOf } from "./engine.js";
 import * as lb from "./leaderboard.js";
+import { passkeysSupported, savePasskey, signInWithPasskey } from "./passkey.js";
 import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, mergeDays, streak } from "./daily.js";
 
 const MAX_MISTAKES = 3;
@@ -10,6 +11,7 @@ const STORE = {
   dailyDone: "cagey:dailyDone", // dates on which a daily was finished, for the streak
   daysSynced: "cagey:daysSynced", // the dates the server is known to have
   mode: "cagey:mode", // "daily" while the daily is the open game
+  passkey: "cagey:passkey", // set once a passkey was saved or used here
 };
 
 const $ = (id) => document.getElementById(id);
@@ -752,8 +754,63 @@ function openSync(code = "") {
   syncStatus(code ? "Press Link to bring your progress from the other device to this one." : "");
   if ($("boardDialog").open) $("boardDialog").close();
   if (!$("syncDialog").open) $("syncDialog").showModal();
+  renderPasskey();
   if (code) $("syncInput").focus();
 }
+
+/** After a sync code or passkey: take over the player's days, push this device's own, and say who we are now. */
+async function adoptPlayer(r) {
+  store.set(STORE.daysSynced, r.dates);
+  store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), r.dates));
+  await syncStreak();
+  renderDailyBtn();
+  lb.retryPending();
+  const s = dailyStreak();
+  const who = r.name ? ` You're playing as <b>${escapeHtml(r.name)}</b>` : " Linked";
+  return `Done.${who}${s.current ? ` with a ${s.current}-day streak` : ""}.`;
+}
+
+/** A failed passkey prompt: say nothing when the player just closed it. */
+function passkeyError(e, fallback) {
+  if (e?.name === "NotAllowedError" || e?.name === "AbortError") return syncStatus("");
+  if (e?.name === "InvalidStateError") return syncStatus("This password manager already has a passkey for you.");
+  syncStatus(e?.status ? escapeHtml(e.message) : fallback, true);
+}
+
+function renderPasskey() {
+  $("passkeyBox").hidden = !passkeysSupported();
+  if (store.get(STORE.passkey)) $("passkeyNote").textContent = "You have a passkey. Use Sign in on any device where your password manager has it.";
+}
+
+$("pkSave").addEventListener("click", async () => {
+  $("pkSave").disabled = true;
+  syncStatus("");
+  try {
+    await savePasskey();
+    store.set(STORE.passkey, 1);
+    renderPasskey();
+    syncStatus("Passkey saved. To play on another device, tap Sign in there.");
+  } catch (e) {
+    passkeyError(e, "Couldn't save the passkey. Check your connection and try again.");
+  } finally {
+    $("pkSave").disabled = false;
+  }
+});
+
+$("pkSignIn").addEventListener("click", async () => {
+  $("pkSignIn").disabled = true;
+  syncStatus("");
+  try {
+    const r = await signInWithPasskey();
+    store.set(STORE.passkey, 1);
+    renderPasskey();
+    syncStatus(await adoptPlayer(r));
+  } catch (e) {
+    passkeyError(e, "Couldn't sign in. Check your connection and try again.");
+  } finally {
+    $("pkSignIn").disabled = false;
+  }
+});
 
 const syncLink = (code) => `${location.origin}${location.pathname}#sync=${code}`;
 const showCode = (code) => `${code.slice(0, 4)}-${code.slice(4)}`;
@@ -794,17 +851,8 @@ $("syncForm").addEventListener("submit", async (e) => {
   btn.disabled = true;
   syncStatus("Linking…");
   try {
-    const r = await lb.useSyncCode(code);
-    // This device's own days still have to reach the new player.
-    store.set(STORE.daysSynced, r.dates);
-    store.set(STORE.dailyDone, mergeDays(store.get(STORE.dailyDone), r.dates));
-    await syncStreak();
-    const s = dailyStreak();
+    syncStatus(await adoptPlayer(await lb.useSyncCode(code)));
     $("syncInput").value = "";
-    const who = r.name ? ` You're playing as <b>${escapeHtml(r.name)}</b>` : " Linked";
-    syncStatus(`Done.${who}${s.current ? ` with a ${s.current}-day streak` : ""}.`);
-    renderDailyBtn();
-    lb.retryPending();
   } catch (err) {
     syncStatus(err.status ? escapeHtml(err.message) : "Couldn't reach the server. Check your connection and try again.", true);
   } finally {

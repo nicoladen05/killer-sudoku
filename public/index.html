@@ -170,7 +170,7 @@
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
       </button></form>
     </div>
-    <p>Your name, leaderboard times and streak are kept with this browser. To play on another device too, get a code here and enter it there. No account needed.</p>
+    <p>Your name, leaderboard times and streak are kept with this browser. To play on another device too, get a code here and enter it there, or save a passkey. No account needed.</p>
     <div class="sync-give">
       <button type="button" class="primary" id="syncMake">Get a code</button>
       <div class="sync-code-box" id="syncCodeBox" hidden>
@@ -186,6 +186,14 @@
       </div>
       <small class="sync-note">This device then plays as that player. Its own times and streak days are added to theirs.</small>
     </form>
+    <div class="sync-passkey" id="passkeyBox" hidden>
+      <p class="sync-head">Passkey</p>
+      <p class="sync-note" id="passkeyNote">Your password manager keeps the passkey on all your devices, so you can get your progress back anywhere, even without this device.</p>
+      <div class="sync-pk-row">
+        <button type="button" id="pkSave">Save passkey</button>
+        <button type="button" id="pkSignIn">Sign in</button>
+      </div>
+    </div>
     <p class="lb-status" id="syncStatus" hidden></p>
   </dialog>
 

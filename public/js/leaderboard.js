@@ -47,6 +47,9 @@ async function call(method, body, query = "", path = API) {
   return data;
 }
 
+/** Any API call: JSON in, JSON out. Errors carry `status` when the server answered. */
+export const api = (method, path, body) => call(method, body, "", path);
+
 /** Scores for a level, or for a daily challenge when `daily` is a date. */
 export function fetchScores(level, daily = null) {
   const board = daily ? `daily=${encodeURIComponent(daily)}` : `level=${encodeURIComponent(level)}`;

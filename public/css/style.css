@@ -488,6 +488,16 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 #syncInput::placeholder { letter-spacing: 0.08em; }
 .sync-take { margin-bottom: 12px; }
 #syncDialog p.lb-status { margin: 0; }
+.sync-passkey { display: grid; gap: 8px; margin-bottom: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.sync-passkey[hidden] { display: none; }
+.dialog p.sync-head { margin: 0; font-size: 0.85rem; color: var(--muted); }
+.sync-pk-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sync-pk-row button {
+  padding: 10px 12px; border-radius: 10px; font-weight: 550;
+  border: 1px solid var(--line); background: var(--key);
+}
+.sync-pk-row button:hover { background: var(--key-hover); }
+.sync-pk-row button:disabled { opacity: 0.6; }
 
 .loading {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
