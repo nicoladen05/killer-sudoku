@@ -2,7 +2,7 @@
 //
 //   GET  /api/scores?level=hard[&player=<id>]
 //        -> top 50: fewer mistakes rank first, then ranked time. A player keeps
-//           their best time for each mistake count, so can appear up to 3 times.
+//           only their best entry (fewest mistakes, then fastest), so appears once.
 //
 // Ranked time = solve time + hint penalty (see hintPenalty); `time` in responses
 // is that ranked time and `raw` the clock time. Mistakes don't add time; they
@@ -52,22 +52,19 @@ async function ipHash(request) {
 }
 
 /**
- * Best entry per player and mistake count within one level (?1). A player can
- * appear once for each mistake count. Ranked by mistakes first, then time.
+ * Each player's best entry within one level (?1): fewest mistakes, then
+ * fastest ranked time. The board is ranked the same way.
  */
 const BEST = `
   SELECT player, name, score, time, mistakes, hints, created_at FROM (
     SELECT player, name, time + ${PENALTY_SQL} AS score, time, mistakes, hints, created_at,
-           ROW_NUMBER() OVER (PARTITION BY player, mistakes ORDER BY time + ${PENALTY_SQL}, created_at) AS n
+           ROW_NUMBER() OVER (PARTITION BY player ORDER BY mistakes, time + ${PENALTY_SQL}, created_at) AS n
     FROM scores WHERE level = ?1
   ) WHERE n = 1`;
 const ORDER = "mistakes, score, created_at";
 
-/**
- * A player's entry and overall rank: the entry with the given mistake count,
- * or their highest-ranked entry when mistakes is null.
- */
-async function rankOf(db, level, player, mistakes = null) {
+/** A player's best entry and its rank, or null. */
+async function rankOf(db, level, player) {
   const row = await db
     .prepare(`WITH best AS (${BEST}) SELECT
         (SELECT COUNT(*) FROM best b WHERE b.mistakes < me.mistakes
@@ -75,9 +72,8 @@ async function rankOf(db, level, player, mistakes = null) {
            OR (b.score = me.score AND b.created_at < me.created_at)))) + 1 AS rank,
         me.score AS time, me.time AS raw, me.mistakes, me.hints, me.name,
         (SELECT COUNT(*) FROM best) AS total
-      FROM best me WHERE me.player = ?2 AND (?3 IS NULL OR me.mistakes = ?3)
-      ORDER BY rank LIMIT 1`)
-    .bind(level, player, mistakes)
+      FROM best me WHERE me.player = ?2`)
+    .bind(level, player)
     .first();
   return row || null;
 }
@@ -131,8 +127,8 @@ export async function onRequestPost({ request, env }) {
   // A name change applies to all of this player's entries.
   await env.DB.prepare("UPDATE scores SET name = ?1 WHERE player = ?2 AND name != ?1").bind(name, b.player).run();
 
-  const me = await rankOf(env.DB, level, b.player, b.mistakes);
-  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.time === b.time + hintPenalty(b.hints), me });
+  const me = await rankOf(env.DB, level, b.player);
+  return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.mistakes === b.mistakes && me?.time === b.time + hintPenalty(b.hints), me });
 }
 
 /** Change the display name on all of a player's entries. */

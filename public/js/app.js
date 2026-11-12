@@ -435,7 +435,7 @@ function showPosted(r) {
   const me = r.me;
   const name = escapeHtml(me?.name || lb.getName());
   const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${LEVELS[solve.level]}.` : "";
-  const note = r.best === false && me ? ` Your best is still ${fmt(me.time)}.` : "";
+  const note = r.best === false && me ? ` Your best is still ${fmt(me.time)} with ${me.mistakes ? plural(me.mistakes, "mistake") : "no mistakes"}.` : "";
   lbStatus(`Posted as ${name}.${where}${note} <button type="button" class="link-inline" data-open-board>See leaderboard</button>`);
 }
 
