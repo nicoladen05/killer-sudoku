@@ -528,7 +528,7 @@ async function loadBoard() {
   list.innerHTML = `<p class="lb-empty">Loading…</p>`;
   const daily = level === "daily" ? boardDate : null;
   const head = daily
-    ? `<p class="lb-day">${escapeHtml(dailyLabel(daily))} · ${LEVELS[DAILY_LEVEL]} · Your first run counts. New puzzle at midnight German time.</p>` : "";
+    ? `<p class="lb-day">${escapeHtml(dailyLabel(daily))} · ${LEVELS[DAILY_LEVEL]}</p>` : "";
   let data;
   try { data = await lb.fetchScores(level, daily); }
   catch (e) { if (level === boardLevel) list.innerHTML = `${head}<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
