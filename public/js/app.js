@@ -1,9 +1,15 @@
 import { rowOf, colOf, boxOf } from "./engine.js";
 import * as lb from "./leaderboard.js";
+import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, streak } from "./daily.js";
 
 const MAX_MISTAKES = 3;
 const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
-const STORE = { game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level" };
+const STORE = {
+  game: "cagey:game", theme: "cagey:theme", next: (d) => `cagey:next3:${d}`, level: "cagey:level",
+  daily: "cagey:daily", // the current or last daily game (any run)
+  dailyDone: "cagey:dailyDone", // dates on which a daily was finished, for the streak
+  mode: "cagey:mode", // "daily" while the daily is the open game
+};
 
 const $ = (id) => document.getElementById(id);
 const board = $("board");
@@ -21,7 +27,7 @@ const store = {
 let worker = null;
 const pending = new Map();
 let reqId = 0;
-function requestPuzzle(difficulty) {
+function requestPuzzle(difficulty, seed) {
   if (!worker) {
     worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
     worker.onmessage = (e) => {
@@ -34,7 +40,7 @@ function requestPuzzle(difficulty) {
   const id = ++reqId;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    worker.postMessage({ id, difficulty });
+    worker.postMessage({ id, difficulty, seed });
   });
 }
 
@@ -57,7 +63,11 @@ async function takePuzzle(difficulty) {
 
 // ---------- State ----------
 
-/** @type {{puzzle:any, values:number[], notes:number[], mistakes:number, elapsed:number, status:string, history:any[], unlimited:boolean}} */
+/**
+ * `daily` is the puzzle's date for a daily game. `ranked` is true only for the
+ * first run of a daily; replays don't go on the leaderboard.
+ * @type {{puzzle:any, values:number[], notes:number[], mistakes:number, elapsed:number, status:string, history:any[], unlimited:boolean, daily?:string, ranked?:boolean}}
+ */
 let game = null;
 let selected = -1;
 let notesMode = false;
@@ -98,7 +108,7 @@ function newGameState(puzzle) {
   };
 }
 
-function save() { if (game) store.set(STORE.game, game); }
+function save() { if (game) store.set(game.daily ? STORE.daily : STORE.game, game); }
 
 // ---------- Board construction ----------
 
@@ -256,7 +266,7 @@ function render() {
   const m = $("mistakes");
   m.textContent = game.unlimited ? `${game.mistakes}` : `${game.mistakes}/${MAX_MISTAKES}`;
   m.classList.toggle("danger", game.mistakes > 0);
-  $("levelLabel").textContent = LEVELS[game.puzzle.difficulty] || "";
+  $("levelLabel").textContent = game.daily ? "Daily" : LEVELS[game.puzzle.difficulty] || "";
   $("undoBtn").disabled = !game.history.length;
   renderTime();
 }
@@ -290,7 +300,10 @@ function setPaused(p) {
   $("pauseBtn").setAttribute("aria-label", p ? "Resume" : "Pause");
   save();
 }
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") save(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") save();
+  else renderDailyBtn(); // the day may have changed
+});
 
 // ---------- Actions ----------
 
@@ -373,16 +386,32 @@ function afterChange() { save(); render(); }
 function finish(won) {
   game.status = won ? "won" : "lost";
   area = null;
+  // Any finished daily keeps the streak going, also replays and games past three mistakes.
+  if (won && game.daily) { store.set(STORE.dailyDone, addSolved(store.get(STORE.dailyDone), game.daily)); renderDailyBtn(); }
   save();
   render();
+  showEnd(won, won ? 350 : 0);
+}
+
+function showEnd(won, delay = 0) {
+  const g = game;
   $("endTitle").textContent = won ? "Solved" : "Three mistakes";
-  $("endText").textContent = won
-    ? `${LEVELS[game.puzzle.difficulty]} puzzle in ${fmt(Math.floor(game.elapsed))} with ${plural(game.mistakes, "mistake")}.` + penaltyNote(game)
+  const what = g.daily ? `Daily challenge (${dailyLabel(g.daily)})` : `${LEVELS[g.puzzle.difficulty]} puzzle`;
+  let text = won
+    ? `${what} in ${fmt(Math.floor(g.elapsed))} with ${plural(g.mistakes, "mistake")}.` + penaltyNote(g)
     : "That's the limit. You can start over, or keep going without a mistake limit.";
+  if (won && g.daily) {
+    const s = dailyStreak();
+    text += ` Streak: ${plural(s.current, "day")}${s.best > s.current ? ` (best ${s.best})` : ""}.`;
+  }
+  $("endText").textContent = text;
   $("continueBtn").hidden = won;
+  $("replayBtn").hidden = !g.daily;
+  $("shareBtn").hidden = !(won && g.daily);
+  $("shareBtn").textContent = "Share";
   $("endDialog").returnValue = "";
   setupSubmit(won);
-  setTimeout(() => $("endDialog").showModal(), won ? 350 : 0);
+  setTimeout(() => { if (!$("endDialog").open) $("endDialog").showModal(); }, delay);
 }
 
 // ---------- Leaderboard ----------
@@ -418,8 +447,10 @@ async function setupSubmit(won) {
   lbStatus("");
   if (!won) return;
   if (game.unlimited) { lbStatus("Games played past three mistakes don't go on the leaderboard."); return; }
+  if (game.daily && !game.ranked) { lbStatus(`Replays don't go on the leaderboard. Only your first run of the day counts. <button type="button" class="link-inline" data-open-board>See leaderboard</button>`); return; }
   const g = game;
   solve = {
+    ...(g.daily ? { daily: g.daily } : {}),
     level: g.puzzle.difficulty,
     time: Math.floor(g.elapsed),
     mistakes: g.mistakes,
@@ -434,7 +465,8 @@ async function setupSubmit(won) {
 function showPosted(r) {
   const me = r.me;
   const name = escapeHtml(me?.name || lb.getName());
-  const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${LEVELS[solve.level]}.` : "";
+  const board = solve.daily ? `the ${escapeHtml(dailyLabel(solve.daily))} daily` : LEVELS[solve.level];
+  const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${board}.` : "";
   const note = r.best === false && me ? ` Your best is still ${fmt(me.time)} with ${me.mistakes ? plural(me.mistakes, "mistake") : "no mistakes"}.` : "";
   lbStatus(`Posted as ${name}.${where}${note} <button type="button" class="link-inline" data-open-board>See leaderboard</button>`);
 }
@@ -464,12 +496,14 @@ $("lbForm").addEventListener("submit", (e) => {
 document.addEventListener("click", (e) => {
   if (!e.target.closest("[data-open-board]")) return;
   $("endDialog").close("board");
-  openBoard(solve?.level);
+  openBoard(solve?.daily ? "daily" : solve?.level);
 });
 
-let boardLevel = null;
+let boardLevel = null; // a level, or "daily"
+let boardDate = null; // the day shown on the daily tab
 async function openBoard(level) {
-  boardLevel = level || game?.puzzle.difficulty || "medium";
+  boardLevel = level || (game?.daily ? "daily" : game?.puzzle.difficulty) || "medium";
+  boardDate = solve?.daily || game?.daily || dailyDate();
   renderPlayingAs();
   if (!$("boardDialog").open) $("boardDialog").showModal();
   loadBoard();
@@ -492,11 +526,14 @@ async function loadBoard() {
   }
   const list = $("lbList");
   list.innerHTML = `<p class="lb-empty">Loading…</p>`;
+  const daily = level === "daily" ? boardDate : null;
+  const head = daily
+    ? `<p class="lb-day">${escapeHtml(dailyLabel(daily))} · ${LEVELS[DAILY_LEVEL]} · Your first run counts. New puzzle at midnight German time.</p>` : "";
   let data;
-  try { data = await lb.fetchScores(level); }
-  catch (e) { if (level === boardLevel) list.innerHTML = `<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
+  try { data = await lb.fetchScores(level, daily); }
+  catch (e) { if (level === boardLevel) list.innerHTML = `${head}<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
   if (level !== boardLevel) return;
-  if (!data.entries.length) { list.innerHTML = `<p class="lb-empty">No times yet. Be the first.</p>`; return; }
+  if (!data.entries.length) { list.innerHTML = `${head}<p class="lb-empty">No times yet. Be the first.</p>`; return; }
   // One ranking: fewer mistakes first, then time. A quiet label marks where each mistake count starts.
   let group = -1;
   const rows = data.entries.map((r) => {
@@ -512,7 +549,7 @@ async function loadBoard() {
   }).join("");
   const me = data.me && !data.entries.some((r) => r.me)
     ? `<p class="lb-me">Your best: <b>${fmt(data.me.time)}</b> with ${data.me.mistakes ? plural(data.me.mistakes, "mistake") : "no mistakes"}, #${data.me.rank} of ${data.me.total}</p>` : "";
-  list.innerHTML = `<ol>${rows}</ol>${me}`;
+  list.innerHTML = `${head}<ol>${rows}</ol>${me}`;
 }
 
 $("boardBtn").addEventListener("click", () => openBoard());
@@ -545,35 +582,133 @@ $("endDialog").addEventListener("close", () => {
     afterChange();
   } else if (v === "new") {
     openNewDialog();
+  } else if (v === "replay" && game.daily) {
+    replayDaily();
   }
 });
+
+$("shareBtn").addEventListener("click", async () => {
+  const text = shareText(game);
+  try {
+    if (navigator.share && matchMedia("(hover: none)").matches) { await navigator.share({ text }); return; }
+    await navigator.clipboard.writeText(text);
+    $("shareBtn").textContent = "Copied";
+  } catch (e) {
+    if (e?.name !== "AbortError") $("shareBtn").textContent = "Couldn't copy";
+  }
+});
+
+/** Spoiler-free result for sharing. */
+function shareText(g) {
+  const s = dailyStreak();
+  const me = g.ranked && g.posted?.me;
+  const parts = [
+    fmt(Math.floor(g.elapsed)),
+    g.mistakes ? plural(g.mistakes, "mistake") : "no mistakes",
+    g.hints ? plural(g.hints, "hint") : "",
+    me ? `#${me.rank} of ${me.total}` : "",
+  ].filter(Boolean);
+  return [
+    `Killer Sudoku daily · ${dailyLabel(g.daily)}`,
+    parts.join(" · "),
+    s.current > 1 ? `🔥 ${s.current}-day streak` : "",
+    location.origin + location.pathname,
+  ].filter(Boolean).join("\n");
+}
+
+/** Show a saved or new game on the board. */
+function loadGame(g) {
+  game = g;
+  selected = -1; area = null; notesMode = false;
+  for (const el of cells) delete el.dataset.key;
+  setupCages();
+  setPaused(false);
+  save();
+  render();
+}
 
 async function startNew(difficulty) {
   store.set(STORE.level, difficulty);
   $("loading").hidden = false;
   try {
     const puzzle = await takePuzzle(difficulty);
-    game = newGameState(puzzle);
-    selected = -1; area = null; notesMode = false;
-    for (const el of cells) delete el.dataset.key;
-    setupCages();
-    setPaused(false);
-    save();
-    render();
+    store.set(STORE.mode, "normal");
+    loadGame(newGameState(puzzle));
   } finally {
     $("loading").hidden = true;
   }
   prefetch(difficulty);
 }
 
+/** The unfinished normal game, if there is one. */
+function savedNormal() {
+  const g = store.get(STORE.game);
+  return g && g.puzzle && g.status === "playing" ? g : null;
+}
+
+function resumeNormal() {
+  const g = savedNormal();
+  if (!g) return openNewDialog();
+  store.set(STORE.mode, "normal");
+  loadGame(g);
+}
+
+// ---------- Daily challenge ----------
+
+const dailyStreak = () => streak(store.get(STORE.dailyDone), dailyDate());
+
+/** Open today's daily: resume it, show the finished one, or build it. */
+async function openDaily() {
+  const today = dailyDate();
+  const saved = store.get(STORE.daily);
+  if (game?.daily === today) { if (game.status !== "playing") showEnd(game.status === "won"); return; }
+  if (saved?.daily === today && saved.puzzle) {
+    store.set(STORE.mode, "daily");
+    loadGame(saved);
+    if (saved.status !== "playing") showEnd(saved.status === "won");
+    return;
+  }
+  $("loading").hidden = false;
+  try {
+    const puzzle = await requestPuzzle(DAILY_LEVEL, dailySeed(today));
+    puzzle.hash = await lb.puzzleHash(puzzle);
+    store.set(STORE.mode, "daily");
+    loadGame({ ...newGameState(puzzle), daily: today, ranked: true });
+  } finally {
+    $("loading").hidden = true;
+  }
+}
+
+/** Play the same daily again. Only the first run is ranked. */
+function replayDaily() {
+  const { puzzle, daily } = game;
+  loadGame({ ...newGameState(puzzle), daily, ranked: false });
+}
+
+function renderDailyBtn() {
+  const s = dailyStreak();
+  const badge = $("dailyBadge");
+  badge.textContent = s.current || "";
+  badge.hidden = !s.current && s.solvedToday;
+  badge.classList.toggle("todo", !s.solvedToday);
+  $("dailyBtn").title = `Daily challenge${s.solvedToday ? " (solved)" : ""}${s.current ? ` · ${plural(s.current, "day")} streak` : ""}`;
+}
+
 function openNewDialog() {
-  const cur = game?.puzzle.difficulty || store.get(STORE.level) || "medium";
+  const cur = game?.daily ? "daily" : game?.puzzle.difficulty || store.get(STORE.level) || "medium";
   for (const b of $("newDialog").querySelectorAll(".levels button")) b.classList.toggle("current", b.value === cur);
+  const s = dailyStreak();
+  $("dailyPickNote").textContent = `${dailyLabel(dailyDate())}${s.solvedToday ? " · solved" : ""}`;
+  const normal = game?.daily && savedNormal();
+  $("resumeNormalBtn").hidden = !normal;
+  if (normal) $("resumeNormalBtn").textContent = `Back to your ${LEVELS[normal.puzzle.difficulty]} game`;
   $("newDialog").showModal();
 }
 $("newDialog").addEventListener("close", () => {
   const v = $("newDialog").returnValue;
   if (LEVELS[v]) startNew(v);
+  else if (v === "daily") openDaily();
+  else if (v === "resume") resumeNormal();
 });
 
 // ---------- Selection and area dragging ----------
@@ -666,6 +801,7 @@ $("eraseBtn").addEventListener("click", erase);
 $("hintBtn").addEventListener("click", hint);
 $("notesBtn").addEventListener("click", () => { notesMode = !notesMode; render(); });
 $("newBtn").addEventListener("click", openNewDialog);
+$("dailyBtn").addEventListener("click", openDaily);
 $("pauseBtn").addEventListener("click", () => setPaused(!paused));
 $("resumeBtn").addEventListener("click", () => setPaused(false));
 
@@ -734,13 +870,23 @@ new ResizeObserver(() => drawCages()).observe(board);
 
 buildBoard();
 lb.retryPending();
+renderDailyBtn();
 
-const saved = store.get(STORE.game);
-if (saved && saved.puzzle && saved.status === "playing") {
+/** The daily to reopen on load: today's, or yesterday's if it is still being played. */
+function savedDaily() {
+  if (store.get(STORE.mode) !== "daily") return null;
+  const g = store.get(STORE.daily);
+  const today = dailyDate();
+  if (!g?.puzzle) return null;
+  return g.daily === today || (g.daily === addDays(today, -1) && g.status === "playing") ? g : null;
+}
+
+const saved = savedDaily() || savedNormal();
+if (saved) {
   game = saved;
   setupCages();
   render();
-  prefetch(game.puzzle.difficulty);
+  prefetch(game.daily ? store.get(STORE.level) || "medium" : game.puzzle.difficulty);
 } else {
   startNew(store.get(STORE.level) || "medium");
 }
