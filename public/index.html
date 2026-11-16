@@ -20,6 +20,7 @@
     <section class="board-area">
       <div class="board" id="board" aria-label="Sudoku board" role="grid">
         <svg class="cages" id="cages" aria-hidden="true"></svg>
+        <div class="duel-cover" id="duelCover" hidden><span id="duelCoverText"></span></div>
         <div class="pause-cover" id="pauseCover" hidden>
           <button class="resume" id="resumeBtn" type="button" aria-label="Resume">
             <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -69,6 +70,24 @@
         </div>
       </div>
 
+      <div class="duel-bar" id="duelBar" hidden>
+        <div class="duel-player" id="duelMe">
+          <span class="duel-dot" aria-hidden="true"></span>
+          <span class="duel-name"></span>
+          <span class="duel-meta"></span>
+          <span class="duel-clock"></span>
+          <span class="duel-progress" aria-hidden="true"><i></i></span>
+        </div>
+        <div class="duel-player" id="duelThem">
+          <span class="duel-dot" aria-hidden="true"></span>
+          <span class="duel-name"></span>
+          <span class="duel-meta"></span>
+          <span class="duel-clock"></span>
+          <span class="duel-progress" aria-hidden="true"><i></i></span>
+        </div>
+        <p class="duel-status" id="duelStatus" role="status"></p>
+      </div>
+
       <div class="tools">
         <button class="tool" id="undoBtn" type="button" title="Undo (Ctrl+Z)">
           <svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
@@ -86,6 +105,10 @@
         <button class="tool" id="hintBtn" type="button" title="Hint (H). On the leaderboard, hint 1 adds 1 minute, hint 2 adds 2 more, and so on">
           <svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/></svg>
           <span>Hint</span>
+        </button>
+        <button class="tool" id="resignBtn" type="button" title="Give up this duel" hidden>
+          <svg viewBox="0 0 24 24"><path d="M5 21V4"/><path d="M5 4h11l-2 4 2 4H5"/></svg>
+          <span>Resign</span>
         </button>
       </div>
 
@@ -105,8 +128,10 @@
     <form method="dialog">
       <h2>New game</h2>
       <button class="resume-normal" id="resumeNormalBtn" value="resume" hidden></button>
+      <button class="resume-normal" id="resumeDuelBtn" value="resumeDuel" hidden>Back to your duel</button>
       <div class="levels">
         <button value="daily" class="daily-pick">Daily challenge <small id="dailyPickNote"></small></button>
+        <button value="duel" class="daily-pick duel-pick">Duel a friend <small>Race or chess clock</small></button>
         <button value="easy">Easy</button>
         <button value="medium">Medium</button>
         <button value="hard">Hard</button>
@@ -133,7 +158,83 @@
         <button type="button" id="shareBtn" hidden>Share</button>
         <button value="continue" id="continueBtn">Keep playing</button>
         <button value="replay" id="replayBtn" hidden>Play again</button>
+        <button value="rematch" id="rematchBtn" hidden>Rematch</button>
         <button value="new" class="primary">New game</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog duel-dialog" id="duelDialog" aria-labelledby="duelTitle">
+    <form class="duel-view" id="duelSetup">
+      <h2 id="duelTitle">Duel a friend</h2>
+      <fieldset class="duel-modes">
+        <legend class="duel-label">Mode</legend>
+        <label class="duel-mode">
+          <input type="radio" name="mode" value="classic" checked>
+          <b>Race</b>
+          <small>You each get the same board. First to solve it wins. Three mistakes and you're out.</small>
+        </label>
+        <label class="duel-mode">
+          <input type="radio" name="mode" value="chess">
+          <b>Chess clock</b>
+          <small>One shared board. Take turns placing a digit while your clock runs. A wrong digit costs 15 seconds and your turn. Most time left at the end wins.</small>
+        </label>
+      </fieldset>
+      <fieldset class="duel-chips" id="duelLevels">
+        <legend class="duel-label">Level</legend>
+        <label><input type="radio" name="level" value="easy"><span>Easy</span></label>
+        <label><input type="radio" name="level" value="medium" checked><span>Medium</span></label>
+        <label><input type="radio" name="level" value="hard"><span>Hard</span></label>
+        <label><input type="radio" name="level" value="expert"><span>Expert</span></label>
+        <label><input type="radio" name="level" value="master"><span>Master</span></label>
+      </fieldset>
+      <fieldset class="duel-chips" id="duelClocks" hidden>
+        <legend class="duel-label">Clock <small>minutes + seconds per digit</small></legend>
+        <label><input type="radio" name="clock" value="3+2"><span>3 + 2</span></label>
+        <label><input type="radio" name="clock" value="5+3" checked><span>5 + 3</span></label>
+        <label><input type="radio" name="clock" value="10+5"><span>10 + 5</span></label>
+      </fieldset>
+      <label class="duel-name-field" id="duelNameField" hidden>
+        <span class="duel-label">Your name <small>shown to your opponent</small></span>
+        <input name="name" maxlength="20" autocomplete="nickname" placeholder="Your name">
+      </label>
+      <button type="submit" class="duel-primary" id="duelCreate">Create invite</button>
+      <div class="duel-or"><span>or join with a code</span></div>
+      <div class="lb-row">
+        <input id="duelCodeInput" maxlength="40" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABC-DEF" aria-label="Duel code">
+        <button type="button" id="duelJoinCode">Join</button>
+      </div>
+      <p class="lb-status" id="duelMsg" role="status" hidden></p>
+      <button type="button" class="link" data-close>Cancel</button>
+    </form>
+
+    <div class="duel-view" id="duelWait" hidden>
+      <h2>Invite a friend</h2>
+      <p>Send them this link or code. The duel starts as soon as they join.</p>
+      <div class="duel-code" id="duelCode"></div>
+      <p class="duel-summary" id="duelWaitSummary"></p>
+      <div class="sync-two">
+        <button type="button" class="sync-btn primary" id="duelCopyLink"><span>Copy link</span></button>
+        <button type="button" class="sync-btn" id="duelCopyCode"><span>Copy code</span></button>
+      </div>
+      <p class="duel-waiting" id="duelWaitText"><span class="duel-spinner" aria-hidden="true"></span>Waiting for your friend…</p>
+      <div class="end-actions">
+        <button type="button" id="duelCancel">Cancel duel</button>
+        <button type="button" data-close>Hide</button>
+      </div>
+    </div>
+
+    <form class="duel-view" id="duelJoin" hidden>
+      <h2>Join duel</h2>
+      <p id="duelJoinText"></p>
+      <label class="duel-name-field" id="duelJoinNameField" hidden>
+        <span class="duel-label">Your name <small>shown to your opponent</small></span>
+        <input name="name" maxlength="20" autocomplete="nickname" placeholder="Your name">
+      </label>
+      <p class="lb-status" id="duelJoinMsg" role="status" hidden></p>
+      <div class="end-actions">
+        <button type="button" data-close>Not now</button>
+        <button type="submit" class="primary" id="duelJoinBtn">Join</button>
       </div>
     </form>
   </dialog>
