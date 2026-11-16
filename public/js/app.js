@@ -68,8 +68,9 @@ async function takePuzzle(difficulty) {
 
 /**
  * `daily` is the puzzle's date for a daily game. `ranked` is true only for the
- * first run of a daily; replays don't go on the leaderboard.
- * @type {{puzzle:any, values:number[], notes:number[], mistakes:number, elapsed:number, status:string, history:any[], unlimited:boolean, daily?:string, ranked?:boolean}}
+ * first run of a daily; replays don't go on the leaderboard. `replay` is set when
+ * the game replays a board from the leaderboard (`name` set the original time).
+ * @type {{puzzle:any, values:number[], notes:number[], mistakes:number, elapsed:number, status:string, history:any[], unlimited:boolean, daily?:string, ranked?:boolean, replay?:{name:string}}}
  */
 let game = null;
 let selected = -1;
@@ -269,7 +270,7 @@ function render() {
   const m = $("mistakes");
   m.textContent = game.unlimited ? `${game.mistakes}` : `${game.mistakes}/${MAX_MISTAKES}`;
   m.classList.toggle("danger", game.mistakes > 0);
-  $("levelLabel").textContent = game.daily ? "Daily" : LEVELS[game.puzzle.difficulty] || "";
+  $("levelLabel").textContent = game.daily ? "Daily" : `${LEVELS[game.puzzle.difficulty] || ""}${game.replay ? " replay" : ""}`;
   $("undoBtn").disabled = !game.history.length;
   renderTime();
 }
@@ -399,7 +400,9 @@ function finish(won) {
 function showEnd(won, delay = 0) {
   const g = game;
   $("endTitle").textContent = won ? "Solved" : "Three mistakes";
-  const what = g.daily ? `Daily challenge (${dailyLabel(g.daily)})` : `${LEVELS[g.puzzle.difficulty]} puzzle`;
+  const what = g.daily ? `Daily challenge (${dailyLabel(g.daily)})`
+    : g.replay ? `${possessive(g.replay.name)} ${LEVELS[g.puzzle.difficulty]} board`
+    : `${LEVELS[g.puzzle.difficulty]} puzzle`;
   let text = won
     ? `${what} in ${fmt(Math.floor(g.elapsed))} with ${plural(g.mistakes, "mistake")}.` + penaltyNote(g)
     : "That's the limit. You can start over, or keep going without a mistake limit.";
@@ -432,6 +435,7 @@ function penaltyNote(g) {
   if (g.unlimited || !hints) return "";
   return ` ${plural(hints, "hint")} add${hints === 1 ? "s" : ""} ${dur(hintPenalty(hints))}, so your leaderboard time is ${fmt(Math.floor(g.elapsed) + hintPenalty(hints))}.`;
 }
+const possessive = (name) => `${name}${/s$/i.test(name) ? "’" : "’s"}`;
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** The solve that just finished, waiting for a name before it is posted. */
@@ -459,6 +463,8 @@ async function setupSubmit(won) {
     mistakes: g.mistakes,
     hints: g.hints || 0,
     puzzle: g.puzzle.hash || (g.puzzle.hash = await lb.puzzleHash(g.puzzle)),
+    ...(Number.isInteger(g.puzzle.seed) && !g.daily ? { seed: g.puzzle.seed } : {}),
+    ...(g.replay ? { replay: true } : {}),
   };
   if (g.posted) { showPosted(g.posted); return; }
   if (lb.getName()) postSolve();
@@ -468,10 +474,14 @@ async function setupSubmit(won) {
 function showPosted(r) {
   const me = r.me;
   const name = escapeHtml(me?.name || lb.getName());
-  const board = solve.daily ? `the ${escapeHtml(dailyLabel(solve.daily))} daily` : LEVELS[solve.level];
+  const see = ` <button type="button" class="link-inline" data-open-board>See leaderboard</button>`;
+  if (solve.replay && r.duplicate) { lbStatus(`You already have a time on this board, so this one isn't posted.${see}`); return; }
+  const board = solve.daily ? `the ${escapeHtml(dailyLabel(solve.daily))} daily`
+    : solve.replay ? `the replays of ${escapeHtml(possessive(game?.replay?.name || "this"))} board`
+    : LEVELS[solve.level];
   const where = me ? ` You're <b>#${me.rank}</b> of ${me.total} on ${board}.` : "";
   const note = r.best === false && me ? ` Your best is still ${fmt(me.time)} with ${me.mistakes ? plural(me.mistakes, "mistake") : "no mistakes"}.` : "";
-  lbStatus(`Posted as ${name}.${where}${note} <button type="button" class="link-inline" data-open-board>See leaderboard</button>`);
+  lbStatus(`Posted as ${name}.${where}${note}${see}`);
 }
 
 async function postSolve() {
@@ -499,11 +509,14 @@ $("lbForm").addEventListener("submit", (e) => {
 document.addEventListener("click", (e) => {
   if (!e.target.closest("[data-open-board]")) return;
   $("endDialog").close("board");
+  if (solve?.replay) openReplays.add(solve.puzzle);
   openBoard(solve?.daily ? "daily" : solve?.level);
 });
 
 let boardLevel = null; // a level, or "daily"
 let boardDate = null; // the day shown on the daily tab
+let boardEntries = []; // entries of the level board on screen
+const openReplays = new Set(); // puzzle hashes whose replay list is shown
 async function openBoard(level) {
   boardLevel = level || (game?.daily ? "daily" : game?.puzzle.difficulty) || "medium";
   boardDate = solve?.daily || game?.daily || dailyDate();
@@ -537,24 +550,96 @@ async function loadBoard() {
   try { data = await lb.fetchScores(level, daily); }
   catch (e) { if (level === boardLevel) list.innerHTML = `${head}<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
   if (level !== boardLevel) return;
+  boardEntries = daily ? [] : data.entries;
   if (!data.entries.length) { list.innerHTML = `${head}<p class="lb-empty">No times yet. Be the first.</p>`; return; }
   // One ranking: fewer mistakes first, then time. A quiet label marks where each mistake count starts.
   let group = -1;
-  const rows = data.entries.map((r) => {
+  const rows = data.entries.map((r, i) => {
     const sep = r.mistakes !== group ? `<li class="lb-sep" aria-hidden="true"><span>${sectionName(r.mistakes)}</span></li>` : "";
     group = r.mistakes;
+    const open = !daily && r.replays > 0 && openReplays.has(r.puzzle);
+    const acts = daily ? "" : `<span class="lb-acts">${
+      r.replays ? `<button type="button" class="lb-act lb-more" data-replays="${i}" aria-expanded="${open}" title="${open ? "Hide" : "Show"} ${plural(r.replays, "replay")}" aria-label="${plural(r.replays, "replay")} of ${escapeHtml(possessive(r.name))} board">${USERS_SVG}<span>${r.replays}</span></button>` : ""
+    }${
+      r.seed != null ? `<button type="button" class="lb-act" data-replay="${i}" title="Play this board" aria-label="Play ${escapeHtml(possessive(r.name))} board">${REPLAY_SVG}</button>` : ""
+    }</span>`;
     return `${sep}
-      <li class="${[r.me ? "me" : "", r.rank <= 3 ? "top" : ""].join(" ").trim()}">
+      <li class="${[r.me ? "me" : "", r.rank <= 3 ? "top" : "", open ? "open" : ""].join(" ").trim()}">
         <span class="lb-rank">${r.rank}</span>
         <span class="lb-name">${escapeHtml(r.name)}</span>
         <span class="lb-extra">${hintText(r.hints)}</span>
+        ${acts}
         <span class="lb-time">${fmt(r.time)}</span>
-      </li>`;
+      </li>${open ? replaysRow(r.puzzle) : ""}`;
   }).join("");
   const me = data.me && !data.entries.some((r) => r.me)
     ? `<p class="lb-me">Your best: <b>${fmt(data.me.time)}</b> with ${data.me.mistakes ? plural(data.me.mistakes, "mistake") : "no mistakes"}, #${data.me.rank} of ${data.me.total}</p>` : "";
-  list.innerHTML = `${head}<ol>${rows}</ol>${me}`;
+  list.innerHTML = `${head}<p class="lb-msg" id="lbMsg" hidden></p><ol class="${daily ? "" : "has-acts"}">${rows}</ol>${me}`;
+  for (const r of boardEntries) if (r.replays > 0 && openReplays.has(r.puzzle)) loadReplays(r.puzzle);
 }
+
+const USERS_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+const REPLAY_SVG = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M10.5 9.2v5.6l4.4-2.8z"/></svg>`;
+
+/** The (still empty) replay list under a board's entry. */
+const replaysRow = (puzzle) => `<li class="lb-replays" data-puzzle="${puzzle}"><p class="lb-empty">Loading…</p></li>`;
+
+/** Fill in the replay list of one board: the original and every replay, ranked. */
+async function loadReplays(puzzle) {
+  const find = () => [...$("lbList").querySelectorAll(".lb-replays")].find((el) => el.dataset.puzzle === puzzle);
+  let data;
+  try { data = await lb.fetchReplays(puzzle); }
+  catch (e) { const el = find(); if (el) el.innerHTML = `<p class="lb-empty">${escapeHtml(e.message)}</p>`; return; }
+  const el = find();
+  if (!el) return;
+  el.innerHTML = `<ol>${data.entries.map((r) => `
+    <li class="${r.me ? "me" : ""}">
+      <span class="lb-rank">${r.rank}</span>
+      <span class="lb-name">${escapeHtml(r.name)}${r.original ? ` <span class="lb-tag">original</span>` : ""}</span>
+      <span class="lb-extra">${[r.mistakes ? plural(r.mistakes, "mistake") : "", hintText(r.hints)].filter(Boolean).join(" · ")}</span>
+      <span class="lb-time">${fmt(r.time)}</span>
+    </li>`).join("")}</ol>`;
+  enter(el, { y: -4, duration: 180 });
+}
+
+/** Play the board behind a leaderboard entry. Its replay goes on that board's replay list. */
+async function startReplay(entry, btn) {
+  const level = boardLevel;
+  const msg = (text) => { const m = $("lbMsg"); if (m) { m.textContent = text; m.hidden = !text; } };
+  msg("");
+  btn.disabled = true;
+  btn.classList.add("busy");
+  try {
+    const puzzle = await requestPuzzle(level, entry.seed);
+    puzzle.hash = await lb.puzzleHash(puzzle);
+    // The generator changed since this time was set, so the seed makes a different board.
+    if (puzzle.hash !== entry.puzzle) { msg("This board was made by an older version of the game and can't be replayed."); return; }
+    $("boardDialog").close();
+    store.set(STORE.mode, "normal");
+    loadGame({ ...newGameState(puzzle), replay: { name: entry.name } });
+  } catch {
+    msg("Couldn't build this board. Try again.");
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove("busy");
+  }
+}
+
+$("lbList").addEventListener("click", (e) => {
+  const play = e.target.closest("[data-replay]");
+  if (play) { startReplay(boardEntries[+play.dataset.replay], play); return; }
+  const more = e.target.closest("[data-replays]");
+  if (!more) return;
+  const r = boardEntries[+more.dataset.replays];
+  const li = more.closest("li");
+  const open = !openReplays.has(r.puzzle);
+  open ? openReplays.add(r.puzzle) : openReplays.delete(r.puzzle);
+  li.classList.toggle("open", open);
+  more.setAttribute("aria-expanded", open);
+  more.title = `${open ? "Hide" : "Show"} ${plural(r.replays, "replay")}`;
+  if (open) { li.insertAdjacentHTML("afterend", replaysRow(r.puzzle)); loadReplays(r.puzzle); }
+  else li.nextElementSibling?.classList.contains("lb-replays") && li.nextElementSibling.remove();
+});
 
 $("boardBtn").addEventListener("click", () => openBoard());
 $("lbTabs").addEventListener("click", (e) => {

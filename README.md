@@ -26,6 +26,7 @@ When the solver gets stuck, the generator splits a cage at that spot. For Master
 - Mistake counter (three mistakes ends the game, or keep playing without a limit) and a timer that pauses when the tab is hidden.
 - **Area check:** drag across a row, column or box (or click a cell and shift-click another cell in the same unit, or hold Shift and press the arrow keys) to highlight it. The keypad then lights up the numbers that area is still missing.
 - **Leaderboard** per level (trophy button, top right). After your first solve you enter a name once; later solves are posted automatically. Everyone is in one ranking: solves with fewer mistakes always rank above solves with more, then by time plus a hint penalty. A subtle label marks where each mistake count starts. Each player appears once, with their best entry (fewest mistakes, then fastest). The first hint adds 1 minute, the second 2 more, the third 3 more and so on (5 hints = 15 minutes), so spamming Hint never pays off. Games continued past three mistakes don't count.
+- **Replays:** the circular-arrow button next to a time on a level board starts that exact board (rebuilt from its generator seed). A replay is ranked on its own: it never shows on the level board, only in that entry's replay list, opened with the people button and count next to it. The list ranks the original and every replay together. Times posted before seeds were kept have no replay button, and a board made by an older generator says it can't be replayed (the rebuilt puzzle's hash must match). Daily boards have no replay buttons.
 - **Daily challenge** (calendar button, top right): one Hard puzzle a day, the same for everyone, with its own leaderboard. A new puzzle starts at midnight German time (Europe/Berlin). You can replay it as often as you like, but only your first finished run is ranked, because a replay is mostly memory. The badge on the button shows your streak, the number of days in a row you finished the daily (any finished run counts, also replays and games past three mistakes). It turns blue while today's puzzle is still open. After solving you can share a spoiler-free result. The daily has its own saved game, so it doesn't replace a puzzle you're in the middle of ("Back to your … game" in the New game dialog).
 - Light and dark mode (follows the system until you toggle it).
 - Progress is saved locally, so a reload picks up where you left off.
@@ -79,11 +80,12 @@ npm run deploy
 
 ### Leaderboard backend
 
-`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is in `migrations/` (`0001_scores.sql`, `0002_daily.sql`, `0003_sync.sql`, then `0004_passkeys.sql`). Apply a new migration to both databases, e.g. `npx wrangler d1 execute cagey-leaderboard --remote --file migrations/0004_passkeys.sql` (and the same for `cagey-leaderboard-preview`).
+`functions/api/scores.js` is a Cloudflare Pages Function backed by D1 (binding `DB`, set in `wrangler.toml`). Production uses the `cagey-leaderboard` database; preview deployments use `cagey-leaderboard-preview`. The schema is in `migrations/` (`0001_scores.sql`, `0002_daily.sql`, `0003_sync.sql`, `0004_passkeys.sql`, then `0005_replays.sql`). Apply a new migration to both databases, e.g. `npx wrangler d1 execute cagey-leaderboard --remote --file migrations/0005_replays.sql` (and the same for `cagey-leaderboard-preview`).
 
 - `GET /api/scores?level=hard&player=<id>`: top 50 (best time per player and mistake count, fewer mistakes first) and your own rank.
 - `GET /api/scores?daily=2026-11-12&player=<id>`: the same for one day's daily challenge.
-- `POST /api/scores`: post a solve (with `daily: "<date>"` for a daily). `PUT /api/scores`: rename a player.
+- `GET /api/scores?replays=<puzzle hash>&player=<id>`: one board's original entry and all its replays, ranked. Level board entries carry `puzzle`, `seed` and `replays` (the count).
+- `POST /api/scores`: post a solve (with `daily: "<date>"` for a daily, `seed` for the generator seed, `replay: true` for a replay of a board on a level board). `PUT /api/scores`: rename a player.
 - `POST /api/streak` (`functions/api/streak.js`): send the daily days the server doesn't have yet, get back all of them (days with a daily leaderboard entry count too). Accepts real dates from the last 400 days, at most 1000 new days per IP per day.
 - `POST /api/sync` (`functions/api/sync.js`): a one-time code for a player (valid 15 minutes). The current code comes back while it has more than a minute left, so reopening the dialog or reloading costs nothing; `renew: true` (the refresh button, e.g. after the code was used) makes a new one and cancels the old one. `PUT /api/sync` with `preview: true`: what using a code would do, as counts (the code stays valid). `PUT /api/sync`: use a code. The device's own times and days move to the code's player (on the same puzzle, the code player's entry wins), and it gets that player's id and name back. At most 60 new codes and 10 wrong codes per IP per hour (generous because a household, school or mobile carrier can share one IP; handing back the current code doesn't count).
 
@@ -115,5 +117,5 @@ functions/api/sync.js    sync codes for other devices
 functions/api/passkey.js passkeys (WebAuthn) for other devices
 lib/server.js       helpers shared by the API functions
 migrations/        D1 schema
-test/               node:test suite for the engine, leaderboard, daily, sync and passkeys (the API runs against node:sqlite via test/d1.mjs)
+test/               node:test suite for the engine, leaderboard, replays, daily, sync and passkeys (the API runs against node:sqlite via test/d1.mjs)
 ```
