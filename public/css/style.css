@@ -474,6 +474,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .lb-extra { font-size: 0.75rem; color: var(--muted); text-align: right; }
 .lb-extra span { white-space: nowrap; }
 .lb-time { font-weight: 600; }
+.lb-list ol.has-acts .lb-time { min-width: 3.1em; text-align: right; }
 .dialog .lb-day { font-size: 0.8rem; margin: 0 8px 8px; }
 .dialog .lb-empty { text-align: center; padding: 32px 0; margin: 0; }
 .dialog .lb-me { font-size: 0.85rem; padding: 8px; margin: 4px 0 0; border-radius: 8px; background: var(--accent-soft); color: var(--text); }
@@ -483,6 +484,36 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 }
 .lb-list li.lb-sep:first-child { padding-top: 0; }
 .lb-list li.lb-sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+/* Level boards: replay buttons sit in a fixed-width column left of the time. */
+.lb-list ol.has-acts > li:not(.lb-sep):not(.lb-replays) { grid-template-columns: 2.2em minmax(3.5em, 1fr) auto 64px auto; gap: 8px; align-items: center; }
+.lb-acts { display: flex; justify-content: flex-end; gap: 2px; margin: -4px 0; }
+.lb-act {
+  height: 28px; min-width: 28px; padding: 0 5px; border: 0; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 3px;
+  background: transparent; color: var(--muted); font: inherit; font-size: 0.72rem; font-weight: 600;
+  transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 100ms var(--ease-out);
+}
+.lb-act svg { width: 16px; height: 16px; flex: none; }
+.lb-act:hover { background: var(--key-hover); color: var(--text); }
+.lb-act:active { transform: scale(0.94); }
+.lb-act:disabled { cursor: progress; }
+.lb-act.busy svg { animation: spin 700ms linear infinite; }
+.lb-act.lb-more[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+.lb-list li.open { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.lb-list li.lb-replays {
+  display: block; padding: 2px 0 6px; margin: 0 0 6px 1.1em;
+  border-left: 2px solid var(--accent-soft); border-radius: 0;
+}
+.lb-list li.lb-replays li { padding: 6px 8px; font-size: 0.9rem; }
+.lb-list li.lb-replays .lb-rank { font-size: 0.8rem; }
+.lb-list li.lb-replays .lb-time { font-weight: 550; }
+.dialog .lb-replays .lb-empty { padding: 10px 8px; text-align: left; font-size: 0.85rem; }
+.lb-tag {
+  display: inline-block; margin-left: 4px; padding: 1px 6px; border-radius: 999px; vertical-align: 1px;
+  font-size: 0.65rem; font-weight: 600; letter-spacing: 0.02em; background: var(--line); color: var(--muted);
+}
+.dialog p.lb-msg { margin: 0 8px 8px; font-size: 0.85rem; color: var(--error); }
+@media (prefers-reduced-motion: reduce) { .lb-act.busy svg { animation-duration: 1.4s; } }
 .lb-foot { font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
 .lb-foot b { color: var(--text); }
 

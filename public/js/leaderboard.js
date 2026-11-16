@@ -56,6 +56,11 @@ export function fetchScores(level, daily = null) {
   return call("GET", null, `?${board}&player=${encodeURIComponent(playerId())}`);
 }
 
+/** Every solve of one board (the original and its replays), by puzzle hash. */
+export function fetchReplays(puzzle) {
+  return call("GET", null, `?replays=${encodeURIComponent(puzzle)}&player=${encodeURIComponent(playerId())}`);
+}
+
 /** Submit a solve. If the network fails it is kept and retried later. */
 export async function submitScore(entry) {
   const body = { ...entry, player: playerId(), name: getName() };

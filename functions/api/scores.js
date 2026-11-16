@@ -5,11 +5,19 @@
 //           only their best entry (fewest mistakes, then fastest), so appears once.
 //   GET  /api/scores?daily=2026-11-12[&player=<id>]
 //        -> the same, for one day's daily challenge.
+//   GET  /api/scores?replays=<puzzle hash>[&player=<id>]
+//        -> every solve of one board: the original entry and its replays.
 //
 // Ranked time = solve time + hint penalty (see hintPenalty); `time` in responses
 // is that ranked time and `raw` the clock time. Mistakes don't add time; they
 // rank first instead.
-//   POST /api/scores  { level, player, name, time, mistakes, hints, puzzle[, daily] }
+//   POST /api/scores  { level, player, name, time, mistakes, hints, puzzle[, seed][, daily][, replay] }
+//
+// `seed` is the generator seed, so others can replay the board (see
+// public/js/engine.js generate). Level board entries return it as `seed` (null
+// for old entries without one), with the puzzle hash and the number of replays.
+// A replay (`replay: true`) must be of a board that is on a level board. It is
+// kept apart: it never shows on the level board, only on that board's replay list.
 //
 // Daily entries carry the date of the puzzle (German time). Only today and
 // yesterday are accepted (yesterday so a game finished just after midnight still
@@ -48,14 +56,43 @@ const isInt = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
  * ranked time. The board is ranked the same way. ?1 is the level, or the date
  * for a daily board.
  */
-const boardWhere = (daily) => (daily ? "daily = ?1" : "level = ?1 AND daily IS NULL");
+const boardWhere = (daily) => (daily ? "daily = ?1" : "level = ?1 AND daily IS NULL AND replay = 0");
 const best = (daily) => `
-  SELECT player, name, score, time, mistakes, hints, created_at FROM (
-    SELECT player, name, time + ${PENALTY_SQL} AS score, time, mistakes, hints, created_at,
+  SELECT player, name, score, time, mistakes, hints, puzzle, seed, created_at FROM (
+    SELECT player, name, time + ${PENALTY_SQL} AS score, time, mistakes, hints, puzzle, seed, created_at,
            ROW_NUMBER() OVER (PARTITION BY player ORDER BY mistakes, time + ${PENALTY_SQL}, created_at) AS n
     FROM scores WHERE ${boardWhere(daily)}
   ) WHERE n = 1`;
 const ORDER = "mistakes, score, created_at";
+const isHash = (v) => typeof v === "string" && /^[a-f0-9]{16,64}$/.test(v);
+const isSeed = (v) => isInt(v, 0, 2 ** 32 - 1);
+
+/**
+ * Every solve of one board (originals and replays), ranked like a level board,
+ * and the player's place on it. `level` is null when the board has no original
+ * on a level board.
+ */
+export async function replayBoard(db, puzzle, player = null) {
+  const original = await db
+    .prepare("SELECT level FROM scores WHERE puzzle = ?1 AND replay = 0 AND daily IS NULL LIMIT 1")
+    .bind(puzzle)
+    .first();
+  const { results } = await db
+    .prepare(`SELECT player, name, time + ${PENALTY_SQL} AS score, time, mistakes, hints, replay, created_at
+              FROM scores WHERE puzzle = ?1 AND daily IS NULL ORDER BY ${ORDER}`)
+    .bind(puzzle)
+    .all();
+  const all = results.map((r, i) => ({
+    rank: i + 1, name: r.name, time: r.score, raw: r.time, mistakes: r.mistakes, hints: r.hints,
+    original: !r.replay, me: !!player && r.player === player,
+  }));
+  const mine = all.find((r) => r.me);
+  return {
+    level: original?.level || null,
+    entries: all.slice(0, TOP),
+    me: mine ? { rank: mine.rank, time: mine.time, raw: mine.raw, mistakes: mine.mistakes, hints: mine.hints, name: mine.name, total: all.length } : null,
+  };
+}
 
 /** A player's best entry on a board and its rank, or null. */
 async function rankOf(db, key, player, daily = false) {
@@ -80,20 +117,29 @@ export function openDailyDates(now = new Date()) {
 
 export async function onRequestGet({ request, env }) {
   const url = new URL(request.url);
+  const raw = url.searchParams.get("player");
+  const player = isPlayer(raw) ? raw : null;
+  const replays = url.searchParams.get("replays");
+  if (replays != null) {
+    if (!isHash(replays)) return json({ error: "bad puzzle" }, 400);
+    return json({ puzzle: replays, ...(await replayBoard(env.DB, replays, player)) });
+  }
   const daily = url.searchParams.get("daily");
   const level = url.searchParams.get("level");
   if (daily != null ? !isDate(daily) : !LEVELS.includes(level)) return json({ error: daily != null ? "bad date" : "bad level" }, 400);
   const isDaily = daily != null;
   const key = isDaily ? daily : level;
-  const raw = url.searchParams.get("player");
-  const player = isPlayer(raw) ? raw : null;
   const { results } = await env.DB
-    .prepare(`${best(isDaily)} ORDER BY ${ORDER} LIMIT ${TOP}`)
+    .prepare(`SELECT b.*, (SELECT COUNT(*) FROM scores r WHERE r.puzzle = b.puzzle AND r.replay = 1) AS replays
+              FROM (${best(isDaily)}) b ORDER BY ${ORDER} LIMIT ${TOP}`)
     .bind(key)
     .all();
   return json({
     ...(isDaily ? { daily, level: DAILY_LEVEL } : { level }),
-    entries: results.map((r, i) => ({ rank: i + 1, name: r.name, time: r.score, raw: r.time, mistakes: r.mistakes, hints: r.hints, me: r.player === player })),
+    entries: results.map((r, i) => ({
+      rank: i + 1, name: r.name, time: r.score, raw: r.time, mistakes: r.mistakes, hints: r.hints, me: r.player === player,
+      ...(isDaily ? {} : { puzzle: r.puzzle, seed: r.seed ?? null, replays: r.replays }),
+    })),
     me: player ? await rankOf(env.DB, key, player, isDaily) : null,
   });
 }
@@ -106,7 +152,10 @@ export async function onRequestPost({ request, env }) {
   const name = cleanName(b.name);
   if (!LEVELS.includes(level)) return json({ error: "bad level" }, 400);
   if (!isPlayer(b.player)) return json({ error: "bad player" }, 400);
-  if (typeof b.puzzle !== "string" || !/^[a-f0-9]{16,64}$/.test(b.puzzle)) return json({ error: "bad puzzle" }, 400);
+  if (!isHash(b.puzzle)) return json({ error: "bad puzzle" }, 400);
+  const seed = b.seed ?? null;
+  if (seed !== null && !isSeed(seed)) return json({ error: "bad seed" }, 400);
+  const replay = b.replay === true;
   if (!name) return json({ error: "Please enter a name." }, 400);
   if (!isInt(b.time, MIN_TIME[level], MAX_TIME)) return json({ error: "That time doesn't look right." }, 400);
   if (!isInt(b.mistakes, 0, 2) || !isInt(b.hints, 0, 81)) return json({ error: "bad counts" }, 400);
@@ -114,6 +163,7 @@ export async function onRequestPost({ request, env }) {
   if (daily !== null) {
     if (!isDate(daily) || level !== DAILY_LEVEL) return json({ error: "bad daily" }, 400);
     if (!openDailyDates().includes(daily)) return json({ error: "That daily challenge has ended." }, 400);
+    if (replay) return json({ error: "bad replay" }, 400);
   }
 
   const ip = await ipHash(request);
@@ -126,6 +176,14 @@ export async function onRequestPost({ request, env }) {
     return json({ error: "Too many submissions. Try again later." }, 429);
   }
 
+  if (replay) {
+    const original = await env.DB
+      .prepare("SELECT 1 FROM scores WHERE puzzle = ?1 AND level = ?2 AND replay = 0 AND daily IS NULL LIMIT 1")
+      .bind(b.puzzle, level)
+      .first();
+    if (!original) return json({ error: "That board isn't on the leaderboard." }, 400);
+  }
+
   if (daily) {
     // The first hash posted for a day becomes that day's puzzle.
     await env.DB.prepare("INSERT INTO daily (date, puzzle, created_at) VALUES (?1, ?2, ?3) ON CONFLICT (date) DO NOTHING")
@@ -135,14 +193,14 @@ export async function onRequestPost({ request, env }) {
   }
 
   const res = await env.DB
-    .prepare(`INSERT INTO scores (level, player, name, time, mistakes, hints, puzzle, ip, created_at, daily)
-              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) ON CONFLICT (player, puzzle) DO NOTHING`)
-    .bind(level, b.player, name, b.time, b.mistakes, b.hints, b.puzzle, ip, now, daily)
+    .prepare(`INSERT INTO scores (level, player, name, time, mistakes, hints, puzzle, ip, created_at, daily, seed, replay)
+              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) ON CONFLICT (player, puzzle) DO NOTHING`)
+    .bind(level, b.player, name, b.time, b.mistakes, b.hints, b.puzzle, ip, now, daily, seed, replay ? 1 : 0)
     .run();
   // A name change applies to all of this player's entries.
   await env.DB.prepare("UPDATE scores SET name = ?1 WHERE player = ?2 AND name != ?1").bind(name, b.player).run();
 
-  const me = await rankOf(env.DB, daily || level, b.player, !!daily);
+  const me = replay ? (await replayBoard(env.DB, b.puzzle, b.player)).me : await rankOf(env.DB, daily || level, b.player, !!daily);
   return json({ ok: true, duplicate: res.meta.changes === 0, best: me?.mistakes === b.mistakes && me?.time === b.time + hintPenalty(b.hints), me });
 }
 
