@@ -13,3 +13,14 @@ database_id = "f9b9054c-04bc-496d-bb95-ab1c6544d7cc"
 binding = "DB"
 database_name = "cagey-leaderboard-preview"
 database_id = "da05c05c-58c8-456b-b17f-5d1aa1b06c28"
+
+# Duels: one Durable Object per duel, defined by the Worker in ./duel-worker.
+[[durable_objects.bindings]]
+name = "DUELS"
+class_name = "Duel"
+script_name = "cagey-duel"
+
+[[env.preview.durable_objects.bindings]]
+name = "DUELS"
+class_name = "Duel"
+script_name = "cagey-duel"

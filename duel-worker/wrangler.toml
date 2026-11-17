@@ -1,0 +1,16 @@
+# Duels: a Worker that only hosts the Duel Durable Object (see index.js).
+# Pages can't define Durable Objects, so the site binds to this one by name
+# (DUELS in ../wrangler.toml). Deploy it before the site: npm run deploy:duel
+name = "cagey-duel"
+main = "index.js"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+[[durable_objects.bindings]]
+name = "DUELS"
+class_name = "Duel"
+
+# SQLite-backed Durable Objects (available on the free plan).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Duel"]

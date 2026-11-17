@@ -705,3 +705,126 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   * { animation: none !important; transition: none !important; }
   .sync-dialog .busy .spin { animation: spin 1.2s linear infinite !important; }
 }
+
+/* ---------- Duels ---------- */
+/* My digits are blue (--entered) and the opponent's warm, on the board and in the bar. */
+.in-duel .stats, .in-duel .pause-btn { display: none; }
+.duel-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.duel-player {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "dot name meta" "clock clock clock" "bar bar bar";
+  align-items: center; column-gap: 6px; row-gap: 2px; min-width: 0;
+  padding: 8px 10px 10px; border-radius: 12px; background: var(--raised); border: 1px solid transparent;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.duel-player.turn { border-color: var(--accent); background: var(--accent-soft); }
+#duelThem.turn { border-color: var(--warm); background: var(--raised); }
+.duel-dot { grid-area: dot; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.duel-player.online .duel-dot { background: var(--ok); }
+.duel-name { grid-area: name; font-size: 0.85rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.duel-meta { grid-area: meta; font-size: 0.72rem; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.duel-meta.danger { color: var(--error); }
+.duel-clock { grid-area: clock; font-size: 1.5rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.duel-clock.low { color: var(--error); }
+.duel-bar[data-mode="classic"] .duel-clock { font-size: 1.05rem; }
+.duel-progress { grid-area: bar; height: 4px; margin-top: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.duel-progress i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--entered); transition: width 250ms var(--ease-out); }
+#duelThem .duel-progress i { background: var(--warm); }
+.duel-bar[data-mode="chess"] .duel-progress { display: none; }
+.duel-foot { grid-column: 1 / -1; display: grid; grid-template-columns: 28px 1fr 28px; align-items: center; }
+.duel-status { grid-column: 2; margin: 0; min-height: 1.3em; font-size: 0.8rem; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.duel-alerts {
+  grid-column: 3; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--muted); display: grid; place-items: center;
+}
+.duel-alerts:hover { background: var(--key-hover); color: var(--text); }
+.duel-alerts svg { width: 18px; height: 18px; }
+.duel-alerts .i-off, .duel-alerts[aria-pressed="false"] .i-on { display: none; }
+.duel-alerts[aria-pressed="false"] .i-off { display: block; }
+
+/* Chess clock: the board's frame turns blue on my move, and the opponent's last digit keeps a ring until I move. */
+.in-duel .board { transition: border-color 200ms ease, box-shadow 200ms ease; }
+.my-turn .board { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow); }
+.cell.last-move { box-shadow: inset 0 0 0 2px var(--warm); }
+.cell.last-move:not(.selected) { background: color-mix(in srgb, var(--warm) 12%, var(--surface)); }
+
+/* Board: the opponent's digits, my move on its way, a rejected digit. */
+.cell.theirs .value { color: var(--warm); }
+.cell.pending .value { opacity: 0.45; }
+.cell.rejected { background: var(--error-soft); }
+.cell.rejected .value { color: var(--error); animation: shake 300ms ease-out; }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+/* Not my turn: digits can't be placed, notes still can. */
+.not-turn:not(.notes-mode) .key { opacity: 0.4; }
+#resignBtn.confirm { color: var(--error); }
+
+.duel-cover {
+  position: absolute; inset: 0; z-index: 3;
+  display: grid; place-items: center; padding: 24px;
+  background: var(--surface); color: var(--muted); text-align: center; font-size: 0.95rem;
+}
+.duel-cover.count span { font-size: clamp(3rem, 14vw, 6rem); font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; animation: pop 300ms var(--ease-out); }
+
+/* Dialog */
+.duel-dialog { width: min(400px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); }
+.duel-view { display: flex; flex-direction: column; gap: 14px; }
+.dialog .duel-view h2 { margin: 0; }
+.dialog .duel-view p { margin: 0; }
+.dialog .duel-view p.lb-status { margin: 0; }
+.duel-view fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.duel-label { display: block; padding: 0; margin-bottom: 6px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+.duel-label small { text-transform: none; letter-spacing: 0; font-size: 0.75rem; margin-left: 4px; }
+.duel-mode {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 10px; row-gap: 2px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--key); cursor: pointer;
+}
+.duel-mode + .duel-mode { margin-top: 8px; }
+/* A plain radio: undo the dialog's text-field styling (padding, border, focus ring) and don't stretch to the card's height. */
+.dialog .duel-mode input {
+  grid-row: span 2; align-self: start; justify-self: center;
+  width: 16px; height: 16px; margin: 2px 0 0; padding: 0;
+  border: 0; border-radius: 50%; background: none; accent-color: var(--accent);
+}
+.dialog .duel-mode input:focus { outline: none; }
+.duel-mode:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.duel-mode b { font-weight: 600; }
+.duel-mode small { color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
+.duel-mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.duel-chips label { display: inline-block; margin: 0 4px 6px 0; cursor: pointer; }
+.duel-chips input { position: absolute; opacity: 0; pointer-events: none; }
+.duel-chips span {
+  display: inline-block; padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--key); font-size: 0.85rem; font-weight: 550;
+}
+.duel-chips input:checked + span { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.duel-chips input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.duel-name-field { display: grid; }
+.duel-name-field input { font-size: max(1rem, 16px); }
+.duel-primary { padding: 12px; border-radius: 10px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.duel-primary:disabled { opacity: 0.6; }
+.duel-or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.8rem; }
+.duel-or::before, .duel-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.duel-code {
+  padding: 14px; border-radius: 12px; background: var(--raised); text-align: center;
+  font-size: 2rem; font-weight: 650; letter-spacing: 0.12em; font-variant-numeric: tabular-nums; user-select: all;
+}
+.dialog .duel-view .duel-summary { text-align: center; font-size: 0.85rem; margin-top: -6px; }
+.dialog .duel-view .duel-waiting { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.9rem; }
+.duel-spinner {
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  border: 2px solid var(--line); border-top-color: var(--accent); animation: spin 700ms linear infinite;
+}
+.duel-waiting.done .duel-spinner { display: none; }
+.duel-view .end-actions button:disabled { opacity: 0.55; }
+#rematchBtn:disabled { opacity: 0.6; }
+
+@media (orientation: portrait) {
+  .duel-bar { width: var(--board); margin: 0 auto; order: -1; }
+  .in-duel .area-hint { display: none; }
+  .duel-player { padding: 6px 10px 8px; }
+  .duel-clock { font-size: 1.3rem; }
+}
+@media (orientation: landscape) and (max-height: 560px) {
+  .duel-player { padding: 4px 8px 6px; }
+  .duel-clock { font-size: 1.1rem; }
+  .duel-status { font-size: 0.72rem; }
+}

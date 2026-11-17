@@ -2,6 +2,7 @@ import { rowOf, colOf, boxOf } from "./engine.js";
 import * as lb from "./leaderboard.js";
 import { passkeysSupported, savePasskey, signInWithPasskey } from "./passkey.js";
 import { DAILY_LEVEL, dailyDate, dailySeed, dailyLabel, addDays, addSolved, mergeDays, streak } from "./daily.js";
+import { MODE_NAMES, DEFAULT_CLOCK, showDuelCode, duelLink, readDuelCode, createDuel, duelInfo, joinDuel, clockLeft, DuelSocket } from "./duel.js";
 
 const MAX_MISTAKES = 3;
 const LEVELS = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert", master: "Master" };
@@ -10,7 +11,11 @@ const STORE = {
   daily: "cagey:daily", // the current or last daily game (any run)
   dailyDone: "cagey:dailyDone", // dates on which a daily was finished, for the streak
   daysSynced: "cagey:daysSynced", // the dates the server is known to have
-  mode: "cagey:mode", // "daily" while the daily is the open game
+  mode: "cagey:mode", // "daily" or "duel" while that is the open game
+  duel: "cagey:duel", // the current or last duel game, once its board is built
+  duelSession: "cagey:duelSession", // { code, token, seat, mode, level, clock } of the current duel
+  duelPrefs: "cagey:duelPrefs", // last duel settings: { mode, level, clock }
+  duelAlerts: "cagey:duelAlerts", // false when chess-clock turn alerts (sound, vibration) are off
   passkey: "cagey:passkey", // set once a passkey was saved or used here
 };
 
@@ -70,7 +75,10 @@ async function takePuzzle(difficulty) {
  * `daily` is the puzzle's date for a daily game. `ranked` is true only for the
  * first run of a daily; replays don't go on the leaderboard. `replay` is set when
  * the game replays a board from the leaderboard (`name` set the original time).
- * @type {{puzzle:any, values:number[], notes:number[], mistakes:number, elapsed:number, status:string, history:any[], unlimited:boolean, daily?:string, ranked?:boolean, replay?:{name:string}}}
+ * `duel` is set for a duel game ({ code, token, seat, mode, level, clock }); its
+ * board is driven by the server and `duelLast` keeps the last state it sent.
+ * In a chess-clock duel the puzzle has no solution: the server checks every digit.
+ * @type {{puzzle:any, values:number[], notes:number[], mistakes:number, elapsed:number, status:string, history:any[], unlimited:boolean, daily?:string, ranked?:boolean, replay?:{name:string}, duel?:object, duelLast?:object}}
  */
 let game = null;
 let selected = -1;
@@ -82,7 +90,8 @@ let paused = false;
 
 const cells = [];
 const isGiven = (i) => game.puzzle.givens[i] !== 0;
-const isCorrect = (i) => game.values[i] !== 0 && game.values[i] === game.puzzle.solution[i];
+// Without a solution (chess-clock duel), only digits the server accepted are on the board.
+const isCorrect = (i) => game.values[i] !== 0 && (!game.puzzle.solution || game.values[i] === game.puzzle.solution[i]);
 const unitCells = (type, index) => {
   const out = [];
   for (let i = 0; i < 81; i++) {
@@ -112,7 +121,7 @@ function newGameState(puzzle) {
   };
 }
 
-function save() { if (game) store.set(game.daily ? STORE.daily : STORE.game, game); }
+function save() { if (game) store.set(game.duel ? STORE.duel : game.daily ? STORE.daily : STORE.game, game); }
 
 // ---------- Board construction ----------
 
@@ -209,6 +218,7 @@ function render() {
   const sel = selected;
   const selVal = sel >= 0 ? game.values[sel] : 0;
   const areaSet = area ? new Set(area.cells) : null;
+  const lastTurn = duelLastTurn();
 
   // Cells that repeat a digit in a row, column or box.
   const conflict = new Set();
@@ -230,15 +240,21 @@ function render() {
     el.classList.toggle("conflict", conflict.has(i));
     el.classList.toggle("given", isGiven(i));
     el.classList.toggle("wrong", v !== 0 && !isCorrect(i));
+    // Duels: the opponent's digits on a shared board, and digits shown for a moment.
+    const temp = v ? null : duelTemp(i);
+    el.classList.toggle("theirs", !!game.owner && game.owner[i] === 1 - game.duel.seat);
+    el.classList.toggle("last-move", lastTurn.has(i));
+    el.classList.toggle("pending", temp?.kind === "pending");
+    el.classList.toggle("rejected", temp?.kind === "rejected");
 
-    const key = v ? `v${v}` : `n${game.notes[i]}:${selVal}`;
+    const key = v ? `v${v}` : temp ? `t${temp.digit}` : `n${game.notes[i]}:${selVal}`;
     if (el.dataset.key === key) continue;
     el.dataset.key = key;
     el.querySelector(".value, .notes")?.remove();
-    if (v) {
+    if (v || temp) {
       const s = document.createElement("span");
       s.className = "value";
-      s.textContent = v;
+      s.textContent = v || temp.digit;
       el.prepend(s);
     } else if (game.notes[i]) {
       const n = document.createElement("div");
@@ -273,6 +289,7 @@ function render() {
   $("levelLabel").textContent = game.daily ? "Daily" : `${LEVELS[game.puzzle.difficulty] || ""}${game.replay ? " replay" : ""}`;
   $("undoBtn").disabled = !game.history.length;
   renderTime();
+  renderDuel();
 }
 
 const fmt = (s) => {
@@ -280,7 +297,7 @@ const fmt = (s) => {
   const mm = String(m).padStart(2, "0"), ss = String(sec).padStart(2, "0");
   return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 };
-function renderTime() { $("timer").textContent = fmt(Math.floor(game.elapsed)); }
+function renderTime() { if (!game.duel) $("timer").textContent = fmt(Math.floor(game.elapsed)); }
 
 // ---------- Timer ----------
 
@@ -289,6 +306,7 @@ setInterval(() => {
   const now = performance.now();
   const dt = (now - lastTick) / 1000;
   lastTick = now;
+  if (game?.duel) { renderDuel(); return; } // duel clocks come from the server
   if (game && game.status === "playing" && !paused && document.visibilityState === "visible") {
     const before = Math.floor(game.elapsed);
     game.elapsed += Math.min(dt, 2);
@@ -297,7 +315,7 @@ setInterval(() => {
 }, 250);
 
 function setPaused(p) {
-  if (!game || game.status !== "playing") p = false;
+  if (!game || game.status !== "playing" || game.duel) p = false; // a duel can't be paused
   paused = p;
   $("pauseCover").hidden = !p;
   document.body.classList.toggle("paused", p);
@@ -311,7 +329,9 @@ document.addEventListener("visibilitychange", () => {
 
 // ---------- Actions ----------
 
-const canPlay = () => game && game.status === "playing" && !paused;
+const canPlay = () => game && game.status === "playing" && !paused && (!game.duel || duelStarted());
+
+function pop(i) { cells[i].classList.remove("pop"); void cells[i].offsetWidth; cells[i].classList.add("pop"); }
 
 function snapshot(list) { return list.map((i) => ({ i, v: game.values[i], n: game.notes[i] })); }
 
@@ -328,19 +348,22 @@ function inputDigit(d) {
     return;
   }
 
+  if (game.duel?.mode === "chess") { chessMove(i, d); return; }
   if (game.values[i] === d) return;
   const affected = [i, ...peersOf(i).filter((j) => !game.values[j] && game.notes[j] & (1 << d))];
   game.history.push({ cells: snapshot(affected) });
   game.values[i] = d;
   game.notes[i] = 0;
-  cells[i].classList.remove("pop"); void cells[i].offsetWidth; cells[i].classList.add("pop");
+  pop(i);
 
+  // A race duel: the server counts digits and mistakes and decides who wins.
+  if (game.duel) duelSend({ type: "move", cell: i, digit: d });
   if (d === game.puzzle.solution[i]) {
     for (const j of affected) if (j !== i) game.notes[j] &= ~(1 << d);
-    if (game.values.every((v, j) => v === game.puzzle.solution[j])) return finish(true);
+    if (!game.duel && game.values.every((v, j) => v === game.puzzle.solution[j])) return finish(true);
   } else {
     game.mistakes++;
-    if (!game.unlimited && game.mistakes >= MAX_MISTAKES) { afterChange(); return finish(false); }
+    if (!game.duel && !game.unlimited && game.mistakes >= MAX_MISTAKES) { afterChange(); return finish(false); }
   }
   afterChange();
 }
@@ -359,12 +382,17 @@ function undo() {
   if (!canPlay()) return;
   const h = game.history.pop();
   if (!h) return;
-  for (const { i, v, n } of h.cells) { game.values[i] = v; game.notes[i] = n; }
+  // On a shared board, undo only takes back notes: placed digits belong to the server.
+  const shared = game.duel?.mode === "chess";
+  for (const { i, v, n } of h.cells) {
+    if (!shared) game.values[i] = v;
+    if (!shared || !game.values[i]) game.notes[i] = n;
+  }
   afterChange();
 }
 
 function hint() {
-  if (!canPlay()) return;
+  if (!canPlay() || game.duel) return;
   let i = selected;
   if (i < 0 || isCorrect(i)) {
     const open = [];
@@ -380,7 +408,7 @@ function hint() {
   game.values[i] = d;
   game.notes[i] = 0;
   for (const j of affected) if (j !== i) game.notes[j] &= ~(1 << d);
-  cells[i].classList.remove("pop"); void cells[i].offsetWidth; cells[i].classList.add("pop");
+  pop(i);
   if (game.values.every((v, j) => v === game.puzzle.solution[j])) return finish(true);
   afterChange();
 }
@@ -413,6 +441,7 @@ function showEnd(won, delay = 0) {
   $("endText").textContent = text;
   $("continueBtn").hidden = won;
   $("replayBtn").hidden = !g.daily;
+  $("rematchBtn").hidden = true;
   $("shareBtn").hidden = !(won && g.daily);
   $("shareBtn").textContent = "Share";
   $("endDialog").returnValue = "";
@@ -673,6 +702,8 @@ $("endDialog").addEventListener("close", () => {
     openNewDialog();
   } else if (v === "replay" && game.daily) {
     replayDaily();
+  } else if (v === "rematch" && game.duel) {
+    rematch();
   }
 });
 
@@ -707,6 +738,8 @@ function shareText(g) {
 
 /** Show a saved or new game on the board. */
 function loadGame(g) {
+  // Leaving a duel that has started: stop listening (a chess clock keeps running on the server).
+  if (duel && g.duel?.code !== duel.code && duel.view?.status !== "lobby") disconnectDuel();
   game = g;
   selected = -1; area = null; notesMode = false;
   for (const el of cells) delete el.dataset.key;
@@ -805,13 +838,16 @@ function renderDailyBtn() {
 }
 
 function openNewDialog() {
-  const cur = game?.daily ? "daily" : game?.puzzle.difficulty || store.get(STORE.level) || "medium";
+  const cur = game?.duel ? "duel" : game?.daily ? "daily" : game?.puzzle.difficulty || store.get(STORE.level) || "medium";
   for (const b of $("newDialog").querySelectorAll(".levels button")) b.classList.toggle("current", b.value === cur);
   const s = dailyStreak();
   $("dailyPickNote").textContent = `${dailyLabel(dailyDate())}${s.solvedToday ? " · solved" : ""}`;
-  const normal = game?.daily && savedNormal();
+  const normal = (game?.daily || game?.duel) && savedNormal();
   $("resumeNormalBtn").hidden = !normal;
   if (normal) $("resumeNormalBtn").textContent = `Back to your ${LEVELS[normal.puzzle.difficulty]} game`;
+  $("resumeDuelBtn").hidden = !!game?.duel || !savedDuelGame(true);
+  const waiting = duel?.view?.status === "lobby";
+  $("newDialog").querySelector(".duel-pick small").textContent = waiting ? "Waiting for your friend" : "Race or chess clock";
   $("newDialog").showModal();
 }
 $("newDialog").addEventListener("close", () => {
@@ -819,7 +855,630 @@ $("newDialog").addEventListener("close", () => {
   if (LEVELS[v]) startNew(v);
   else if (v === "daily") openDaily();
   else if (v === "resume") resumeNormal();
+  else if (v === "duel") openDuelDialog();
+  else if (v === "resumeDuel") resumeDuel();
 });
+
+// ---------- Duels ----------
+//
+// The server (one Durable Object per duel, rules in lib/duel.js) decides
+// everything: when the duel starts, which digits count, the clocks and who won.
+// This tab builds the board from the server's seed, sends moves and shows the
+// state it gets back.
+
+/**
+ * The duel this tab is connected to, or null.
+ * { code, token, seat, mode, level, clock, socket, view, ready, pending, rejected, seenAt, notice, offer, asked, building, outbox }
+ */
+let duel = null;
+
+/** The saved duel game to go back to (`any`: also when the open game isn't a duel). */
+function savedDuelGame(any = false) {
+  if (!any && store.get(STORE.mode) !== "duel") return null;
+  const g = store.get(STORE.duel);
+  if (!g?.puzzle || !g.duel) return null;
+  return any ? (g.status === "playing" && store.get(STORE.duelSession)?.code === g.duel.code ? g : null) : g;
+}
+
+const isDuelGame = () => !!game?.duel && game.duel.code === duel?.code;
+/** The latest state of the duel on the board (live, or saved with the game). */
+const duelState = () => (isDuelGame() && duel.view) || game?.duelLast || null;
+const duelNow = () => (duel?.socket ? duel.socket.serverNow() : Date.now());
+function duelStarted() {
+  const v = isDuelGame() && duel.view;
+  return !!v && v.status === "playing" && v.startAt != null && duelNow() >= v.startAt;
+}
+const opponentName = (v) => v?.players?.[1 - v.you]?.name || "Your opponent";
+
+function connectDuel(session) {
+  if (duel?.code === session.code && !duel.socket.closed) return duel;
+  disconnectDuel();
+  store.set(STORE.duelSession, session);
+  const me = { ...session, view: null, ready: null, pending: null, rejected: null, seenAt: null, notice: null, offer: null, asked: false, building: false, outbox: [] };
+  me.socket = new DuelSocket(session.code, session.token, {
+    onState: (v) => { if (duel === me) onDuelState(v); },
+    onMessage: (m) => { if (duel === me) onDuelMessage(m); },
+    onStatus: (st) => {
+      if (duel !== me) return;
+      if (st === "online") for (const m of me.outbox.splice(0)) me.socket.send(m);
+      if (isDuelGame()) render();
+      renderDuelWait();
+    },
+  });
+  duel = me;
+  return me;
+}
+
+function disconnectDuel() {
+  duel?.socket.close();
+  duel = null;
+}
+
+/** Forget the current duel (it ended before it started, or is gone). */
+function dropDuel() {
+  disconnectDuel();
+  store.del(STORE.duelSession);
+}
+
+/** Send a race move; while offline it waits, so a mistake still counts once back online. */
+function duelSend(msg) { if (isDuelGame() && !duel.socket.send(msg)) duel.outbox.push(msg); }
+
+function onDuelState(v) {
+  const first = !duel.view;
+  duel.view = v;
+  if (first && v.last) duel.seenAt = v.last.at; // don't replay an old rejected digit after a reload
+  if (v.status === "lobby") { renderDuelWait(); return; }
+  if (v.status === "over" && !isDuelGame() && !duel.building) {
+    // Ended before this tab had a board: cancelled, expired, or the boards didn't match.
+    renderDuelWait();
+    if (v.result?.reason === "mismatch") {
+      $("duelDialog").close();
+      duelEndDialog(v);
+    }
+    dropDuel();
+    return;
+  }
+  if ($("duelDialog").open) $("duelDialog").close();
+  const needBoard = !isDuelGame() || (v.status === "preparing" && !v.players[v.you].ready && !duel.ready);
+  if (needBoard) buildDuelBoard(v);
+  else applyDuelView(v);
+}
+
+function onDuelMessage(m) {
+  if (m.type === "error") {
+    duel.pending = null;
+    duel.notice = { text: m.error, until: Date.now() + 3000 };
+    if (isDuelGame()) render();
+  } else if (m.type === "rematch") {
+    duel.offer = { code: m.code, name: m.name };
+    if (isDuelGame() && game.status !== "playing") duelEndDialog(duelState());
+  } else if (m.type === "gone") {
+    // The server deleted the duel (hours after it ended).
+    const waiting = $("duelDialog").open && !$("duelWait").hidden;
+    const onBoard = isDuelGame();
+    dropDuel();
+    if (waiting) {
+      $("duelWaitText").lastChild.textContent = "This invite has expired.";
+      $("duelWaitText").classList.add("done");
+    }
+    if (onBoard && game.status === "playing") {
+      game.status = "ended";
+      game.duelLast = { ...game.duelLast, status: "over", result: { winner: null, reason: "abandoned" } };
+      save();
+      render();
+    }
+  }
+}
+
+/** Build the duel's board from the server's seed (in the worker) and tell the server it's ready. */
+async function buildDuelBoard(v) {
+  if (duel.building) return;
+  const me = duel;
+  me.building = true;
+  $("loading").hidden = false;
+  try {
+    const puzzle = await requestPuzzle(v.level, v.seed);
+    puzzle.hash = await lb.puzzleHash(puzzle);
+    if (duel !== me) return;
+    me.ready = { type: "ready", hash: puzzle.hash, puzzle: { cages: puzzle.cages, givens: puzzle.givens, solution: puzzle.solution } };
+    // On a shared board, the server checks every digit, so this tab doesn't keep the solution.
+    const { solution, ...unsolved } = puzzle;
+    const info = { code: me.code, token: me.token, seat: me.seat, mode: me.mode, level: me.level, clock: me.clock, perTurn: me.perTurn ?? null };
+    store.set(STORE.mode, "duel");
+    loadGame({ ...newGameState(me.mode === "chess" ? unsolved : puzzle), duel: info });
+    applyDuelView(me.view);
+  } catch {
+    me.notice = { text: "Couldn't build the board. Reload the page to try again.", until: Infinity };
+  } finally {
+    me.building = false;
+    $("loading").hidden = true;
+  }
+}
+
+/** Bring the board in line with what the server says. */
+function applyDuelView(v) {
+  if (!isDuelGame()) return;
+  const me = v.you;
+  if (v.status === "preparing" && !v.players[me].ready && duel.ready) duel.socket.send(duel.ready);
+
+  if (v.mode === "chess" && v.values) {
+    for (let i = 0; i < 81; i++) {
+      const d = v.values[i];
+      if (!d || game.values[i] === d) continue;
+      game.values[i] = d;
+      game.notes[i] = 0;
+      for (const j of peersOf(i)) game.notes[j] &= ~(1 << d);
+      if (v.last?.cell === i) pop(i);
+    }
+    game.owner = v.owner;
+    game.mistakes = v.players[me].mistakes;
+    // My digit was answered once there's a new move (it may stay my turn), the turn passed, or the duel ended.
+    const fresh = !!v.last && v.last.at !== duel.seenAt;
+    if (fresh || v.turn !== me || v.status !== "playing") duel.pending = null;
+    if (fresh) {
+      duel.seenAt = v.last.at;
+      // Turn alerts: a tick when the opponent places a digit, a low tone for any rejected
+      // digit, and a buzz (phones that support it) when the turn comes back to me.
+      const theirs = v.last.seat !== me;
+      if (theirs || !v.last.ok) turnAlert(v.last.ok ? "move" : "wrong", theirs && v.status === "playing" && v.turn === me);
+      if (!v.last.ok) {
+        duel.rejected = { cell: v.last.cell, digit: v.last.digit, until: performance.now() + 1200 };
+        setTimeout(() => { if (game) render(); }, 1250);
+      }
+    }
+  } else if (v.mine) {
+    // A race: take the server's digits (e.g. after playing on with a lost connection),
+    // and send right digits the server hasn't got yet.
+    for (let i = 0; i < 81; i++) {
+      if (v.mine[i] && game.values[i] !== v.mine[i]) { game.values[i] = v.mine[i]; game.notes[i] = 0; }
+      else if (!v.mine[i] && v.status === "playing" && game.values[i] && game.values[i] === game.puzzle.solution[i]) {
+        duel.socket.send({ type: "move", cell: i, digit: game.values[i] });
+      }
+    }
+    game.mistakes = Math.max(game.mistakes, v.players[me].mistakes);
+  }
+
+  game.duelLast = v;
+  if (v.status === "over" && game.status === "playing") {
+    const w = v.result?.winner;
+    game.status = w === me ? "won" : w == null ? "draw" : "lost";
+    area = null;
+    save();
+    render();
+    duelEndDialog(v, w === me ? 350 : 0);
+    return;
+  }
+  save();
+  render();
+}
+
+/** A digit shown for a moment in an empty cell: my move on its way, or a rejected one. */
+function duelTemp(i) {
+  if (!game.duel || !duel) return null;
+  if (duel.pending?.cell === i) return { kind: "pending", digit: duel.pending.digit };
+  const r = duel.rejected;
+  if (r?.cell === i && performance.now() < r.until) return { kind: "rejected", digit: r.digit };
+  return null;
+}
+
+/** The digits the opponent placed in their last turn, while it's my move (chess clock). */
+function duelLastTurn() {
+  const v = game?.duel?.mode === "chess" ? duelState() : null;
+  if (v?.status !== "playing" || v.turn !== v.you) return new Set();
+  // Servers from before digits per turn only send `last`.
+  if (v.prevTurn) return new Set(v.prevTurn.seat !== v.you ? v.prevTurn.cells : []);
+  return new Set(v.last?.ok && v.last.seat !== v.you ? [v.last.cell] : []);
+}
+
+// ----- Turn alerts (chess clock): a short sound, and a buzz on phones that support it -----
+
+const alertsOn = () => store.get(STORE.duelAlerts) !== false;
+let audio = null;
+/** Browsers only let a page start sound after a tap or key press, so get ready on the first one. */
+function unlockAudio() {
+  // Also while creating or joining a duel, so the first alert can already play.
+  if (!(game?.duel || $("duelDialog").open) || !alertsOn()) return;
+  try {
+    audio ||= new AudioContext();
+    if (audio.state === "suspended") audio.resume();
+  } catch {}
+}
+addEventListener("pointerdown", unlockAudio, true);
+addEventListener("keydown", unlockAudio, true);
+
+/** "move": a soft high tick; "wrong": a low falling tone. `buzz` also vibrates. Made in the browser, no files. */
+function turnAlert(kind, buzz = false) {
+  if (!alertsOn()) return;
+  if (buzz) try { navigator.vibrate?.([60, 40, 60]); } catch {}
+  try {
+    audio ||= new AudioContext();
+    if (audio.state !== "running") return;
+    const t = audio.currentTime;
+    const [type, from, to, length, volume] = kind === "move" ? ["sine", 880, 660, 0.12, 0.12] : ["triangle", 240, 150, 0.25, 0.15];
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, t);
+    osc.frequency.exponentialRampToValueAtTime(to, t + length);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(volume, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + length + 0.02);
+  } catch {}
+}
+
+$("duelAlerts").addEventListener("click", () => {
+  const on = !alertsOn();
+  store.set(STORE.duelAlerts, on);
+  if (on) { unlockAudio(); audio?.resume().then(() => turnAlert("move")).catch(() => {}); }
+  renderDuel();
+});
+
+function chessMove(i, d) {
+  const v = duel.view;
+  if (game.values[i] || duel.pending) return;
+  if (v.turn !== v.you) { nudge($("duelStatus")); return; }
+  if (!duel.socket.send({ type: "move", cell: i, digit: d })) {
+    duel.notice = { text: "Reconnecting…", until: Date.now() + 2000 };
+    render();
+    return;
+  }
+  duel.pending = { cell: i, digit: d };
+  render();
+}
+
+/** Resign (or cancel before the start). The first press asks; a second within 3 s resigns. */
+let resignTimer = 0;
+function resign() {
+  const btn = $("resignBtn");
+  if (!isDuelGame() || game.status !== "playing") return;
+  if (!btn.classList.contains("confirm")) {
+    btn.classList.add("confirm");
+    btn.querySelector("span").textContent = "Sure?";
+    clearTimeout(resignTimer);
+    resignTimer = setTimeout(() => { btn.classList.remove("confirm"); btn.querySelector("span").textContent = "Resign"; }, 3000);
+    return;
+  }
+  clearTimeout(resignTimer);
+  btn.classList.remove("confirm");
+  btn.querySelector("span").textContent = "Resign";
+  if (!duel.socket.send({ type: "resign" })) { duel.notice = { text: "Reconnecting…", until: Date.now() + 2000 }; render(); }
+}
+
+/** Chess clock: 4:05, and tenths under 10 seconds (9.4). */
+function fmtClock(ms) {
+  if (ms > 0 && ms < 10_000) return (Math.floor(ms / 100) / 10).toFixed(1);
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/** The duel bar (both players), the cover with the countdown, and the duel-only tools. */
+function renderDuel() {
+  const on = !!game?.duel;
+  document.body.classList.toggle("in-duel", on);
+  $("duelBar").hidden = !on;
+  $("resignBtn").hidden = !on;
+  $("hintBtn").hidden = on;
+  if (!on) { $("duelCover").hidden = true; document.body.classList.remove("not-turn", "my-turn"); return; }
+
+  const g = game.duel;
+  const v = duelState();
+  const live = isDuelGame();
+  const now = duelNow();
+  const me = g.seat;
+  const chess = g.mode === "chess";
+  const started = v?.status === "playing" && now >= v.startAt;
+  $("duelBar").dataset.mode = g.mode;
+
+  for (const [el, seat] of [[$("duelMe"), me], [$("duelThem"), 1 - me]]) {
+    const p = v?.players?.[seat];
+    el.querySelector(".duel-name").textContent = seat === me ? "You" : p?.name || "Opponent";
+    el.classList.toggle("online", live && (seat === me ? duel.socket.online : !!p?.online));
+    const m = p?.mistakes || 0;
+    el.querySelector(".duel-meta").textContent = chess ? (m ? `${m} ✗` : "") : `${m}/${MAX_MISTAKES} ✗`;
+    el.querySelector(".duel-meta").classList.toggle("danger", m > 0);
+    const clock = el.querySelector(".duel-clock");
+    if (chess) {
+      const ms = v?.left ? clockLeft(v, seat, now) : null;
+      clock.textContent = ms == null ? "–:––" : fmtClock(ms);
+      clock.classList.toggle("low", ms != null && ms < 20_000 && v.status === "playing");
+      el.classList.toggle("turn", started && v.turn === seat);
+    } else {
+      const total = v?.total ?? game.puzzle.givens.filter((x) => !x).length;
+      const filled = seat === me
+        ? game.values.reduce((n, x, i) => n + (x && !isGiven(i) && isCorrect(i) ? 1 : 0), 0)
+        : p?.filled || 0;
+      clock.textContent = `${filled}/${total}`;
+      el.querySelector(".duel-progress i").style.width = `${total ? (100 * filled) / total : 0}%`;
+      el.classList.remove("turn");
+    }
+  }
+  document.body.classList.toggle("not-turn", chess && started && v.turn !== me);
+  document.body.classList.toggle("my-turn", chess && started && v.turn === me);
+  $("duelAlerts").hidden = !chess;
+  $("duelAlerts").setAttribute("aria-pressed", alertsOn());
+
+  // Status line under the players.
+  let status = "";
+  const them = opponentName(v);
+  if (duel?.notice && Date.now() < duel.notice.until) status = duel.notice.text;
+  else if (!v) status = live ? "Connecting…" : "";
+  else if (v.status === "over") status = game.status === "won" ? "You won" : game.status === "draw" ? "Draw" : v.result?.winner == null ? "Duel ended" : `${them} won`;
+  else if (live && !duel.socket.online) status = "Reconnecting…";
+  else if (v.status === "preparing") status = v.players[1 - me]?.ready ? "Getting ready…" : `Waiting for ${them}…`;
+  else if (!started) status = "Get ready";
+  else if (chess) {
+    const l = v.last;
+    if (l && !l.ok && now - l.at < 3000) status = l.seat === me ? "Wrong digit · −15 s" : `${them} placed a wrong digit · −15 s`;
+    else {
+      status = v.turn === me ? "Your move" : `${them}’s move`;
+      const per = v.perTurn || 1;
+      if (per > 1) status += ` · ${plural(per - (v.placed || 0), "digit")} to go`;
+    }
+  } else status = `${LEVELS[g.level]} race · ${fmt(Math.max(0, Math.floor((now - v.startAt) / 1000)))}`;
+  $("duelStatus").textContent = status;
+
+  // Cover over the board until the start: the board is hidden until both can see it.
+  let cover = "";
+  if (!v || v.status === "preparing") cover = status || "Getting ready…";
+  else if (v.status === "playing" && !started) cover = String(Math.max(1, Math.ceil((v.startAt - now) / 1000)));
+  $("duelCover").hidden = !cover;
+  $("duelCover").classList.toggle("count", /^\d$/.test(cover));
+  if ($("duelCoverText").textContent !== cover) $("duelCoverText").textContent = cover;
+}
+
+// ----- Duel dialog: set up, wait for a friend, join -----
+
+function duelView(id) {
+  for (const v of ["duelSetup", "duelWait", "duelJoin"]) $(v).hidden = v !== id;
+}
+const duelSummary = ({ mode, level, clock, perTurn }) =>
+  [MODE_NAMES[mode], LEVELS[level], mode === "chess" && clock ? clock.replace("+", " + ") : "", mode === "chess" && perTurn > 1 ? `${perTurn} digits per turn` : ""]
+    .filter(Boolean).join(" · ");
+
+function duelMsg(id, text, isError = true) {
+  const el = $(id);
+  el.textContent = text;
+  el.hidden = !text;
+  el.classList.toggle("error", isError);
+}
+
+function openDuelDialog() {
+  if (duel?.view?.status === "lobby") { renderDuelWait(); duelView("duelWait"); $("duelDialog").showModal(); return; }
+  const prefs = store.get(STORE.duelPrefs) || {};
+  const form = $("duelSetup");
+  for (const [name, val] of [["mode", prefs.mode || "classic"], ["level", prefs.level || store.get(STORE.level) || "medium"], ["clock", prefs.clock || DEFAULT_CLOCK], ["perTurn", prefs.perTurn || 1]]) {
+    const input = form.querySelector(`input[name="${name}"][value="${val}"]`);
+    if (input) input.checked = true;
+  }
+  showChessOptions(form.elements.mode.value === "chess");
+  $("duelNameField").hidden = !!lb.getName();
+  form.elements.name.value = "";
+  $("duelCodeInput").value = "";
+  duelMsg("duelMsg", "");
+  duelView("duelSetup");
+  $("duelDialog").showModal();
+}
+
+/** Clock and digits per turn only apply to the chess clock. */
+function showChessOptions(on) {
+  $("duelClocks").hidden = !on;
+  $("duelPerTurn").hidden = !on;
+}
+$("duelSetup").addEventListener("change", (e) => {
+  if (e.target.name === "mode") showChessOptions(e.target.value === "chess");
+});
+
+/** Take the name from a dialog's name field if it's shown. False if one is needed. */
+function takeName(form, msgId) {
+  if (lb.getName()) return true;
+  const name = form.elements.name.value.trim();
+  if (!name) { duelMsg(msgId, "Please enter a name."); form.elements.name.focus(); return false; }
+  lb.setName(name);
+  return true;
+}
+
+$("duelSetup").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = $("duelSetup");
+  if (!takeName(form, "duelMsg")) return;
+  const settings = { mode: form.elements.mode.value, level: form.elements.level.value, clock: form.elements.clock.value, perTurn: Number(form.elements.perTurn.value) };
+  store.set(STORE.duelPrefs, settings);
+  const btn = $("duelCreate");
+  btn.disabled = true;
+  duelMsg("duelMsg", "");
+  try {
+    const r = await createDuel(settings);
+    if (duel?.view?.status === "lobby") duel.socket.send({ type: "resign" }); // replace an older invite
+    const chess = settings.mode === "chess";
+    connectDuel({ code: r.code, token: r.token, seat: r.seat, ...settings, clock: chess ? settings.clock : null, perTurn: chess ? settings.perTurn : null });
+    renderDuelWait();
+    duelView("duelWait");
+  } catch (err) {
+    duelMsg("duelMsg", err.status ? err.message : offline);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function joinFromInput() {
+  const code = readDuelCode($("duelCodeInput").value);
+  if (!code) { duelMsg("duelMsg", "Codes look like ABC-DEF."); $("duelCodeInput").focus(); return; }
+  showJoin(code);
+}
+$("duelJoinCode").addEventListener("click", joinFromInput);
+$("duelCodeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); joinFromInput(); } });
+
+function renderDuelWait() {
+  if (!duel) return;
+  $("duelCode").textContent = showDuelCode(duel.code);
+  $("duelWaitSummary").textContent = duelSummary(duel);
+  const v = duel.view;
+  const text = v?.status === "over" ? (v.result?.reason === "expired" ? "This invite has expired." : "This duel was cancelled.")
+    : !duel.socket.online && v ? "Reconnecting…"
+    : "Waiting for your friend…";
+  $("duelWaitText").lastChild.textContent = text;
+  $("duelWaitText").classList.toggle("done", v?.status === "over");
+}
+
+/** Copy (or on phones, share) an invite; the button says how it went for a moment. */
+async function copyText(btn, text, share = false) {
+  const label = btn.querySelector("span");
+  const say = (words) => {
+    label.textContent = words;
+    clearTimeout(btn.resetTimer);
+    btn.resetTimer = setTimeout(() => { label.textContent = btn.dataset.label; }, 1600);
+  };
+  btn.dataset.label ||= label.textContent;
+  try {
+    if (share && navigator.share && matchMedia("(hover: none)").matches) {
+      await navigator.share({ text: `Duel me in Killer Sudoku: ${text}` });
+      return;
+    }
+    await navigator.clipboard.writeText(text);
+    say("Copied");
+  } catch (err) {
+    if (err?.name !== "AbortError") say("Couldn't copy");
+  }
+}
+$("duelCopyLink").addEventListener("click", (e) => duel && copyText(e.currentTarget, duelLink(duel.code), true));
+$("duelCopyCode").addEventListener("click", (e) => duel && copyText(e.currentTarget, showDuelCode(duel.code)));
+$("duelCancel").addEventListener("click", () => {
+  if (duel?.view?.status === "lobby") duel.socket.send({ type: "resign" });
+  dropDuel();
+  $("duelDialog").close();
+});
+$("duelDialog").addEventListener("click", (e) => { if (e.target.closest("[data-close]")) $("duelDialog").close(); });
+
+/** The join view for a code from a link or typed in. */
+let joining = null; // { code, info }
+async function showJoin(code) {
+  if (duel?.code === code) {
+    // Already in this duel (e.g. the invite link opened again).
+    if (duel.view?.status === "lobby") { renderDuelWait(); duelView("duelWait"); if (!$("duelDialog").open) $("duelDialog").showModal(); }
+    else if (!isDuelGame()) resumeDuel();
+    return;
+  }
+  joining = { code, info: null };
+  duelView("duelJoin");
+  $("duelJoinText").textContent = "Looking up the duel…";
+  $("duelJoinNameField").hidden = !!lb.getName();
+  $("duelJoin").elements.name.value = "";
+  $("duelJoinBtn").disabled = true;
+  duelMsg("duelJoinMsg", "");
+  if (!$("duelDialog").open) $("duelDialog").showModal();
+  try {
+    const info = await duelInfo(code);
+    if (joining?.code !== code) return;
+    joining.info = info;
+    const per = info.perTurn || 1;
+    const how = info.mode === "chess"
+      ? `One shared board: take turns placing ${per === 1 ? "a digit" : `${per} digits`} while your clock runs. A wrong digit costs 15 seconds and ends your turn. Most time left at the end wins.`
+      : "You each get the same board. First to solve it wins; three mistakes and you're out.";
+    $("duelJoinText").textContent = `${info.host} invites you to a duel: ${duelSummary(info)}. ${how}`;
+    if (info.status === "over") duelMsg("duelJoinMsg", "This duel has ended.");
+    else if (info.full) duelMsg("duelJoinMsg", "This duel already has two players.");
+    $("duelJoinBtn").disabled = info.status === "over";
+  } catch (err) {
+    if (joining?.code !== code) return;
+    $("duelJoinText").textContent = err.status === 404 ? "This duel doesn't exist or has expired." : offline;
+  }
+}
+
+$("duelJoin").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const j = joining;
+  if (!j?.info || !takeName($("duelJoin"), "duelJoinMsg")) return;
+  const btn = $("duelJoinBtn");
+  btn.disabled = true;
+  duelMsg("duelJoinMsg", "");
+  try {
+    const r = await joinDuel(j.code);
+    if (duel?.view?.status === "lobby") duel.socket.send({ type: "resign" }); // our own invite isn't needed now
+    connectDuel({ code: j.code, token: r.token, seat: r.seat, mode: j.info.mode, level: j.info.level, clock: j.info.clock, perTurn: j.info.perTurn ?? null });
+    duelMsg("duelJoinMsg", "Joined. Building the board…", false);
+  } catch (err) {
+    duelMsg("duelJoinMsg", err.status ? err.message : offline);
+    btn.disabled = false;
+  }
+});
+
+/** A #duel=CODE invite link: show who is inviting and offer to join. */
+function openDuelLink() {
+  const m = location.hash.match(/^#duel=([A-Za-z0-9-]{6,8})$/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname + location.search);
+  const code = readDuelCode(m[1]);
+  if (code) showJoin(code);
+}
+
+function resumeDuel() {
+  const g = savedDuelGame(true) || savedDuelGame();
+  const session = store.get(STORE.duelSession);
+  if (!g || session?.code !== g.duel.code) return openNewDialog();
+  store.set(STORE.mode, "duel");
+  connectDuel(session);
+  loadGame(g);
+}
+
+// ----- End of a duel -----
+
+function duelEndDialog(v, delay = 0) {
+  if (!v?.result) return;
+  const { winner, reason, time } = v.result;
+  const me = v.you;
+  const them = opponentName(v);
+  const won = winner === me;
+  const left = v.left ? ` You had ${fmtClock(v.left[me])} left, ${them} had ${fmtClock(v.left[1 - me])}.` : "";
+  const texts = {
+    solved: `${won ? "You" : them} solved it first, in ${fmt(Math.round((time || 0) / 1000))}.`,
+    mistakes: won ? `${them} made three mistakes.` : "Three mistakes. That's the limit in a race.",
+    complete: `The board is full.${left}`,
+    timeout: won ? `${them} ran out of time.` : "You ran out of time.",
+    resign: won ? `${them} resigned.` : "You resigned.",
+    mismatch: "Your two devices built different boards from the same duel. Reload the page on both and start a new duel.",
+    cancelled: "The duel was cancelled.",
+    expired: "The invite expired before the duel started.",
+    abandoned: "Nobody finished within a day.",
+  };
+  $("endTitle").textContent = winner == null ? (reason === "complete" ? "Draw" : "Duel over") : won ? "You won" : `${them} won`;
+  $("endText").textContent = texts[reason] || "";
+  $("lbForm").hidden = true;
+  $("shareBtn").hidden = true;
+  $("continueBtn").hidden = true;
+  $("replayBtn").hidden = true;
+  const canRematch = isDuelGame() && v.players.length === 2 && reason !== "mismatch";
+  const btn = $("rematchBtn");
+  btn.hidden = !canRematch;
+  btn.textContent = duel?.offer ? "Accept rematch" : duel?.asked ? "Rematch sent" : "Rematch";
+  btn.disabled = !duel?.offer && !!duel?.asked;
+  lbStatus(canRematch && duel.offer ? `${escapeHtml(duel.offer.name)} wants a rematch.` : "");
+  $("endDialog").returnValue = "";
+  setTimeout(() => { if (!$("endDialog").open) $("endDialog").showModal(); }, delay);
+}
+
+/** Accept the other player's rematch, or offer one: a new duel with the same settings. */
+async function rematch() {
+  const old = duel;
+  if (!old || !isDuelGame()) return;
+  if (old.offer) { await showJoin(old.offer.code); return; }
+  const settings = { mode: old.mode, level: old.level, clock: old.clock || DEFAULT_CLOCK, perTurn: old.perTurn || 1 };
+  try {
+    const r = await createDuel(settings);
+    old.asked = true;
+    old.socket.send({ type: "rematch", code: r.code });
+    connectDuel({ code: r.code, token: r.token, seat: r.seat, mode: settings.mode, level: settings.level, clock: old.clock, perTurn: old.perTurn ?? null });
+    renderDuelWait();
+    $("duelWaitText").lastChild.textContent = `Rematch offered. Waiting for ${opponentName(game.duelLast)}…`;
+    duelView("duelWait");
+    $("duelDialog").showModal();
+  } catch (err) {
+    lbStatus(escapeHtml(err.status ? err.message : offline), true);
+    $("endDialog").showModal();
+  }
+}
 
 // ---------- Other devices (sync codes and passkeys) ----------
 
@@ -1335,6 +1994,7 @@ keypad.addEventListener("click", (e) => {
 $("undoBtn").addEventListener("click", undo);
 $("eraseBtn").addEventListener("click", erase);
 $("hintBtn").addEventListener("click", hint);
+$("resignBtn").addEventListener("click", resign);
 $("notesBtn").addEventListener("click", () => { notesMode = !notesMode; render(); });
 $("newBtn").addEventListener("click", openNewDialog);
 $("dailyBtn").addEventListener("click", openDaily);
@@ -1429,12 +2089,17 @@ function savedDaily() {
   return g.daily === today || (g.daily === addDays(today, -1) && g.status === "playing") ? g : null;
 }
 
-const saved = savedDaily() || savedNormal();
+const saved = savedDuelGame() || savedDaily() || savedNormal();
+// Reconnect to the current duel: the one on the board, or an invite still waiting for a friend.
+const session = store.get(STORE.duelSession);
+if (session && (saved?.duel ? saved.duel.code === session.code : store.get(STORE.duel)?.duel?.code !== session.code)) connectDuel(session);
 if (saved) {
   game = saved;
   setupCages();
   render();
-  prefetch(game.daily ? store.get(STORE.level) || "medium" : game.puzzle.difficulty);
+  prefetch(game.daily || game.duel ? store.get(STORE.level) || "medium" : game.puzzle.difficulty);
 } else {
   startNew(store.get(STORE.level) || "medium");
 }
+openDuelLink();
+addEventListener("hashchange", openDuelLink);
