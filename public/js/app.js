@@ -15,6 +15,7 @@ const STORE = {
   duel: "cagey:duel", // the current or last duel game, once its board is built
   duelSession: "cagey:duelSession", // { code, token, seat, mode, level, clock } of the current duel
   duelPrefs: "cagey:duelPrefs", // last duel settings: { mode, level, clock }
+  duelAlerts: "cagey:duelAlerts", // false when chess-clock turn alerts (sound, vibration) are off
   passkey: "cagey:passkey", // set once a passkey was saved or used here
 };
 
@@ -217,6 +218,7 @@ function render() {
   const sel = selected;
   const selVal = sel >= 0 ? game.values[sel] : 0;
   const areaSet = area ? new Set(area.cells) : null;
+  const lastMove = duelLastMove();
 
   // Cells that repeat a digit in a row, column or box.
   const conflict = new Set();
@@ -241,6 +243,7 @@ function render() {
     // Duels: the opponent's digits on a shared board, and digits shown for a moment.
     const temp = v ? null : duelTemp(i);
     el.classList.toggle("theirs", !!game.owner && game.owner[i] === 1 - game.duel.seat);
+    el.classList.toggle("last-move", i === lastMove);
     el.classList.toggle("pending", temp?.kind === "pending");
     el.classList.toggle("rejected", temp?.kind === "rejected");
 
@@ -1013,6 +1016,10 @@ function applyDuelView(v) {
     if (v.turn !== me || v.status !== "playing") duel.pending = null;
     if (v.last && v.last.at !== duel.seenAt) {
       duel.seenAt = v.last.at;
+      // Turn alerts: a tick when the opponent places a digit, a low tone for any rejected
+      // digit, and a buzz (phones that support it) when the turn comes back to me.
+      const theirs = v.last.seat !== me;
+      if (theirs || !v.last.ok) turnAlert(v.last.ok ? "move" : "wrong", theirs && v.status === "playing");
       if (!v.last.ok) {
         duel.rejected = { cell: v.last.cell, digit: v.last.digit, until: performance.now() + 1200 };
         setTimeout(() => { if (game) render(); }, 1250);
@@ -1052,6 +1059,58 @@ function duelTemp(i) {
   if (r?.cell === i && performance.now() < r.until) return { kind: "rejected", digit: r.digit };
   return null;
 }
+
+/** The cell of the opponent's last digit while it's my move (chess clock), else -1. */
+function duelLastMove() {
+  const v = game?.duel?.mode === "chess" ? duelState() : null;
+  return v?.status === "playing" && v.last?.ok && v.last.seat !== v.you ? v.last.cell : -1;
+}
+
+// ----- Turn alerts (chess clock): a short sound, and a buzz on phones that support it -----
+
+const alertsOn = () => store.get(STORE.duelAlerts) !== false;
+let audio = null;
+/** Browsers only let a page start sound after a tap or key press, so get ready on the first one. */
+function unlockAudio() {
+  // Also while creating or joining a duel, so the first alert can already play.
+  if (!(game?.duel || $("duelDialog").open) || !alertsOn()) return;
+  try {
+    audio ||= new AudioContext();
+    if (audio.state === "suspended") audio.resume();
+  } catch {}
+}
+addEventListener("pointerdown", unlockAudio, true);
+addEventListener("keydown", unlockAudio, true);
+
+/** "move": a soft high tick; "wrong": a low falling tone. `buzz` also vibrates. Made in the browser, no files. */
+function turnAlert(kind, buzz = false) {
+  if (!alertsOn()) return;
+  if (buzz) try { navigator.vibrate?.([60, 40, 60]); } catch {}
+  try {
+    audio ||= new AudioContext();
+    if (audio.state !== "running") return;
+    const t = audio.currentTime;
+    const [type, from, to, length, volume] = kind === "move" ? ["sine", 880, 660, 0.12, 0.12] : ["triangle", 240, 150, 0.25, 0.15];
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(from, t);
+    osc.frequency.exponentialRampToValueAtTime(to, t + length);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(volume, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + length);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + length + 0.02);
+  } catch {}
+}
+
+$("duelAlerts").addEventListener("click", () => {
+  const on = !alertsOn();
+  store.set(STORE.duelAlerts, on);
+  if (on) { unlockAudio(); audio?.resume().then(() => turnAlert("move")).catch(() => {}); }
+  renderDuel();
+});
 
 function chessMove(i, d) {
   const v = duel.view;
@@ -1098,7 +1157,7 @@ function renderDuel() {
   $("duelBar").hidden = !on;
   $("resignBtn").hidden = !on;
   $("hintBtn").hidden = on;
-  if (!on) { $("duelCover").hidden = true; document.body.classList.remove("not-turn"); return; }
+  if (!on) { $("duelCover").hidden = true; document.body.classList.remove("not-turn", "my-turn"); return; }
 
   const g = game.duel;
   const v = duelState();
@@ -1133,6 +1192,9 @@ function renderDuel() {
     }
   }
   document.body.classList.toggle("not-turn", chess && started && v.turn !== me);
+  document.body.classList.toggle("my-turn", chess && started && v.turn === me);
+  $("duelAlerts").hidden = !chess;
+  $("duelAlerts").setAttribute("aria-pressed", alertsOn());
 
   // Status line under the players.
   let status = "";

@@ -730,7 +730,22 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .duel-progress i { display: block; height: 100%; width: 0; border-radius: inherit; background: var(--entered); transition: width 250ms var(--ease-out); }
 #duelThem .duel-progress i { background: var(--warm); }
 .duel-bar[data-mode="chess"] .duel-progress { display: none; }
-.duel-status { grid-column: 1 / -1; margin: 0; min-height: 1.3em; font-size: 0.8rem; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.duel-foot { grid-column: 1 / -1; display: grid; grid-template-columns: 28px 1fr 28px; align-items: center; }
+.duel-status { grid-column: 2; margin: 0; min-height: 1.3em; font-size: 0.8rem; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+.duel-alerts {
+  grid-column: 3; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  background: transparent; color: var(--muted); display: grid; place-items: center;
+}
+.duel-alerts:hover { background: var(--key-hover); color: var(--text); }
+.duel-alerts svg { width: 18px; height: 18px; }
+.duel-alerts .i-off, .duel-alerts[aria-pressed="false"] .i-on { display: none; }
+.duel-alerts[aria-pressed="false"] .i-off { display: block; }
+
+/* Chess clock: the board's frame turns blue on my move, and the opponent's last digit keeps a ring until I move. */
+.in-duel .board { transition: border-color 200ms ease, box-shadow 200ms ease; }
+.my-turn .board { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow); }
+.cell.last-move { box-shadow: inset 0 0 0 2px var(--warm); }
+.cell.last-move:not(.selected) { background: color-mix(in srgb, var(--warm) 12%, var(--surface)); }
 
 /* Board: the opponent's digits, my move on its way, a rejected digit. */
 .cell.theirs .value { color: var(--warm); }
