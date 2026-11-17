@@ -94,7 +94,7 @@ npm run deploy
 npm run deploy:duel   # deploys the "cagey-duel" Worker with the Duel Durable Object
 ```
 
-The Git integration only builds the site, so deploy the Worker yourself. It uses SQLite-backed Durable Objects, which the free plan includes. Until the Worker exists, the site still works and `/api/duel` answers 503 (also in preview deployments, which bind the same Worker).
+The Git integration only builds the site, so deploy the Worker yourself. It uses SQLite-backed Durable Objects, which the free plan includes. The Worker has to exist before any site deploy, preview deployments included (they bind the same Worker): otherwise Cloudflare refuses to publish the site's Functions with `Script cagey-duel not found`. (Without a `DUELS` binding at all, as in `npm run dev`, `/api/duel` answers 503 and the rest of the site works.)
 
 ### Leaderboard backend
 
