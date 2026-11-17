@@ -2,8 +2,8 @@
 // cagey-duel Worker (duel-worker/index.js), reached through the DUELS binding
 // and named by its invite code.
 //
-//   POST /api/duel             { player, name, mode, level[, clock] } -> { code, token, seat }
-//   GET  /api/duel/<code>      -> { code, mode, level, clock, status, host, full }
+//   POST /api/duel             { player, name, mode, level[, clock, perTurn] } -> { code, token, seat }
+//   GET  /api/duel/<code>      -> { code, mode, level, clock, perTurn, status, host, full }
 //   POST /api/duel/<code>/join { player, name }                     -> { code, token, seat }
 //   GET  /api/duel/<code>/ws?token=<token>  WebSocket for one player
 //
@@ -11,7 +11,7 @@
 // server, so the other player doesn't learn it. Rules: lib/duel.js.
 
 import { json, readJson, isPlayer, ipHash, cleanName, nowSec } from "../../../lib/server.js";
-import { MODES, LEVELS, CLOCKS, newDuelCode, normDuelCode } from "../../../lib/duel.js";
+import { MODES, LEVELS, CLOCKS, PER_TURN, newDuelCode, normDuelCode } from "../../../lib/duel.js";
 
 /** Per IP per hour: new duels, and lookups of codes that don't exist. */
 export const RATE = { duel: 30, duelmiss: 30 };
@@ -37,13 +37,15 @@ async function create(request, env) {
   if (!MODES.includes(b.mode)) return json({ error: "bad mode" }, 400);
   if (!LEVELS.includes(b.level)) return json({ error: "bad level" }, 400);
   if (b.mode === "chess" && !CLOCKS[b.clock]) return json({ error: "bad clock" }, 400);
+  const perTurn = b.perTurn ?? 1;
+  if (b.mode === "chess" && !PER_TURN.includes(perTurn)) return json({ error: "bad perTurn" }, 400);
   const ip = await ipHash(request);
   if (await tooMany(env.DB, ip, "duel")) return json({ error: "Too many duels. Try again later." }, 429);
   await note(env.DB, ip, "duel");
   // A code can only be taken once; on the rare clash, draw another.
   for (let i = 0; i < 5; i++) {
     const code = newDuelCode();
-    const res = await stubFor(env, code).fetch("https://duel/create", post({ code, mode: b.mode, level: b.level, clock: b.clock, player: b.player, name }));
+    const res = await stubFor(env, code).fetch("https://duel/create", post({ code, mode: b.mode, level: b.level, clock: b.clock, perTurn, player: b.player, name }));
     if (res.status === 409) continue;
     const out = await res.json();
     return res.ok ? json({ code, ...out }) : json(out, res.status);

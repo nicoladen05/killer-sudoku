@@ -183,7 +183,7 @@
         <label class="duel-mode">
           <input type="radio" name="mode" value="chess">
           <b>Chess clock</b>
-          <small>One shared board. Take turns placing a digit while your clock runs. A wrong digit costs 15 seconds and your turn. Most time left at the end wins.</small>
+          <small>One shared board. Take turns placing digits while your clock runs. A wrong digit costs 15 seconds and ends your turn. Most time left at the end wins.</small>
         </label>
       </fieldset>
       <fieldset class="duel-chips" id="duelLevels">
@@ -199,6 +199,12 @@
         <label><input type="radio" name="clock" value="3+2"><span>3 + 2</span></label>
         <label><input type="radio" name="clock" value="5+3" checked><span>5 + 3</span></label>
         <label><input type="radio" name="clock" value="10+5"><span>10 + 5</span></label>
+      </fieldset>
+      <fieldset class="duel-chips" id="duelPerTurn" hidden>
+        <legend class="duel-label">Digits per turn <small>a wrong one ends the turn</small></legend>
+        <label><input type="radio" name="perTurn" value="1" checked><span>1</span></label>
+        <label><input type="radio" name="perTurn" value="2"><span>2</span></label>
+        <label><input type="radio" name="perTurn" value="3"><span>3</span></label>
       </fieldset>
       <label class="duel-name-field" id="duelNameField" hidden>
         <span class="duel-label">Your name <small>shown to your opponent</small></span>

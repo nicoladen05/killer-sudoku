@@ -20,12 +20,12 @@ const T0 = 1_000_000;
 /** Wrong digit for a cell. */
 const wrong = (i) => (P.solution[i] % 9) + 1;
 
-function lobby(mode = "classic", clock = "5+3") {
-  return createDuel({ code: "ABCDEF", mode, level: "easy", clock, player: A, name: "Anna", token: "secret-token-anna", seed: 7, now: T0 });
+function lobby(mode = "classic", clock = "5+3", perTurn) {
+  return createDuel({ code: "ABCDEF", mode, level: "easy", clock, perTurn, player: A, name: "Anna", token: "secret-token-anna", seed: 7, now: T0 });
 }
 /** Both seated and ready: the countdown has started at T0 + 10. */
-function started(mode = "classic", first = 0) {
-  let s = joinDuel(lobby(mode), { player: B, name: "Ben", token: "secret-token-ben" }).state;
+function started(mode = "classic", first = 0, perTurn) {
+  let s = joinDuel(lobby(mode, "5+3", perTurn), { player: B, name: "Ben", token: "secret-token-ben" }).state;
   s = step(s, { type: "ready", seat: 0, hash: HASH, puzzle: PUZZLE }, T0 + 5).state;
   s = step(s, { type: "ready", seat: 1, hash: HASH, puzzle: PUZZLE, first }, T0 + 10).state;
   return s;
@@ -79,7 +79,7 @@ test("a friend joins once; the host can't join their own invite", () => {
   // The same player again (say, a second tab) gets their seat and token back.
   assert.deepEqual([joinDuel(j.state, { player: B, name: "Ben", token: "new" }).seat, joinDuel(j.state, { player: B, name: "Ben", token: "new" }).token], [1, "secret-token-ben"]);
   assert.match(joinDuel(j.state, { player: "cccccccc-3333", name: "Cy", token: "tC" }).error, /two players/);
-  assert.deepEqual(info(j.state), { code: "ABCDEF", mode: "classic", level: "easy", clock: null, status: "preparing", host: "Anna", full: true });
+  assert.deepEqual(info(j.state), { code: "ABCDEF", mode: "classic", level: "easy", clock: null, perTurn: null, status: "preparing", host: "Anna", full: true });
 });
 
 test("the duel starts after a countdown once both browsers built the same board", () => {
@@ -256,6 +256,46 @@ test("chess: views show the shared board and both clocks", () => {
   assert.ok(!JSON.stringify(v).includes(JSON.stringify(P.solution)));
 });
 
+test("chess: digits per turn defaults to 1 and only takes 1, 2 or 3", () => {
+  assert.equal(lobby("chess").perTurn, 1);
+  assert.equal(lobby("chess", "5+3", 3).perTurn, 3);
+  assert.equal(lobby("chess", "5+3", 7).perTurn, 1);
+  assert.equal(lobby("classic", "5+3", 2).perTurn, null);
+  assert.equal(info(lobby("chess", "3+2", 2)).perTurn, 2);
+});
+
+test("chess: with 2 per turn, the turn passes after two right digits and the clock runs throughout", () => {
+  let s = started("chess", 0, 2);
+  const [a, b, c] = EMPTY;
+  s = move(s, 0, a, P.solution[a], GO + 5000).state;
+  assert.deepEqual([s.turn, s.turnStart, view(s, 1, GO + 5000).placed], [0, GO + 5000, 1], "still Anna's turn");
+  assert.equal(s.left[0], BASE - (5000 - LAG_GRACE) + INC);
+  s = move(s, 0, b, P.solution[b], GO + 7000).state;
+  assert.equal(s.left[0], BASE - (5000 - LAG_GRACE) - (2000 - LAG_GRACE) + 2 * INC);
+  assert.deepEqual([s.turn, s.turnStart], [1, GO + 7000]);
+  const v = view(s, 1, GO + 7000);
+  assert.deepEqual([v.placed, v.turnCells, v.prevTurn, v.perTurn], [0, [], { seat: 0, cells: [a, b] }, 2]);
+  assert.match(move(s, 0, c, P.solution[c], GO + 7100).error, /not your turn/);
+});
+
+test("chess: a wrong digit ends a multi-digit turn at once", () => {
+  let s = started("chess", 0, 3);
+  const [a, b] = EMPTY;
+  s = move(s, 0, a, P.solution[a], GO + 1000).state;
+  s = move(s, 0, b, wrong(b), GO + 2000).state;
+  assert.equal(s.turn, 1);
+  assert.deepEqual(s.prevTurn, { seat: 0, cells: [a] });
+  assert.equal(s.left[0], BASE - 2 * (1000 - LAG_GRACE) + INC - WRONG_PENALTY);
+});
+
+test("chess: a duel saved before digits per turn existed still plays one digit per turn", () => {
+  const s = started("chess", 0);
+  delete s.perTurn; delete s.turnCells; delete s.prevTurn;
+  const next = move(s, 0, EMPTY[0], P.solution[EMPTY[0]], GO + 1000).state;
+  assert.equal(next.turn, 1);
+  assert.equal(view(next, 0, GO + 1000).perTurn, 1);
+});
+
 // ---------- Durable Object and API, with a fake runtime ----------
 
 class FakeSocket {
@@ -318,7 +358,7 @@ test("API: create, look up, join and play a race through the Durable Object", as
   assert.ok(normDuelCode(made.code) && made.token.length >= 20);
 
   const [, about] = await api(env, "GET", made.code.toLowerCase());
-  assert.deepEqual(about, { code: made.code, mode: "classic", level: "easy", clock: null, status: "lobby", host: "Anna", full: false });
+  assert.deepEqual(about, { code: made.code, mode: "classic", level: "easy", clock: null, perTurn: null, status: "lobby", host: "Anna", full: false });
   assert.equal((await api(env, "GET", "ZZZZZZ"))[0], 404);
   assert.equal((await api(env, "POST", `${made.code}/join`, { player: A, name: "Anna" }))[0], 409);
   const [, joined] = await api(env, "POST", `${made.code}/join`, { player: B, name: "Ben" });
@@ -412,6 +452,16 @@ test("API: new duels and wrong codes are rate limited per IP", async () => {
   for (let i = 0; i < 30; i++) assert.equal((await api(env, "GET", "ZZZZZZ", null, "8.8.8.8"))[0], 404);
   assert.equal((await api(env, "GET", "ZZZZZZ", null, "8.8.8.8"))[0], 429);
   assert.equal((await api(env, "GET", "ZZZZZZ", null, "7.7.7.7"))[0], 404, "other IPs are fine");
+});
+
+test("API: digits per turn is checked and kept", async () => {
+  const env = fakeEnv();
+  const body = { player: A, name: "Anna", mode: "chess", level: "easy", clock: "5+3" };
+  assert.equal((await api(env, "POST", "", { ...body, perTurn: 4 }))[0], 400);
+  const [, made] = await api(env, "POST", "", { ...body, perTurn: 2 });
+  assert.equal((await api(env, "GET", made.code))[1].perTurn, 2);
+  const [, plain] = await api(env, "POST", "", body);
+  assert.equal((await api(env, "GET", plain.code))[1].perTurn, 1);
 });
 
 test("API: says so when duels aren't configured", async () => {

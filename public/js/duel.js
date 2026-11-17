@@ -19,8 +19,10 @@ export function readDuelCode(raw) {
   return /^[A-HJKMNP-Z2-9]{6}$/.test(c) ? c : "";
 }
 
-export const createDuel = ({ mode, level, clock }) =>
-  api("POST", API, { player: playerId(), name: getName(), mode, level, clock: mode === "chess" ? clock : undefined });
+export const createDuel = ({ mode, level, clock, perTurn }) => {
+  const chess = mode === "chess";
+  return api("POST", API, { player: playerId(), name: getName(), mode, level, clock: chess ? clock : undefined, perTurn: chess ? perTurn || 1 : undefined });
+};
 export const duelInfo = (code) => api("GET", `${API}/${code}`);
 export const joinDuel = (code) => api("POST", `${API}/${code}/join`, { player: playerId(), name: getName() });
 
