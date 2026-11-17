@@ -778,7 +778,14 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
   padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--key); cursor: pointer;
 }
 .duel-mode + .duel-mode { margin-top: 8px; }
-.duel-mode input { grid-row: span 2; margin: 3px 0 0; accent-color: var(--accent); }
+/* A plain radio: undo the dialog's text-field styling (padding, border, focus ring) and don't stretch to the card's height. */
+.dialog .duel-mode input {
+  grid-row: span 2; align-self: start; justify-self: center;
+  width: 16px; height: 16px; margin: 2px 0 0; padding: 0;
+  border: 0; border-radius: 50%; background: none; accent-color: var(--accent);
+}
+.dialog .duel-mode input:focus { outline: none; }
+.duel-mode:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .duel-mode b { font-weight: 600; }
 .duel-mode small { color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
 .duel-mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
